@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 252 352">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b5aa0"/>
+      <stop offset="1" stop-color="#123057"/>
+    </linearGradient>
+    <linearGradient id="art" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7ec8ff"/>
+      <stop offset="1" stop-color="#2b6fb0"/>
+    </linearGradient>
+  </defs>
+  <rect width="252" height="352" rx="14" fill="url(#bg)"/>
+  <rect x="10" y="10" width="232" height="332" rx="10" fill="none" stroke="#ffd23f" stroke-width="3"/>
+  <text x="20" y="34" font-family="sans-serif" font-size="18" font-weight="bold" fill="#fff">Example Card</text>
+  <text x="232" y="34" font-family="sans-serif" font-size="14" font-weight="bold" fill="#fff" text-anchor="end">HP 50</text>
+  <rect x="22" y="46" width="208" height="130" rx="6" fill="url(#art)"/>
+  <circle cx="126" cy="111" r="42" fill="#e8f4ff" opacity="0.85"/>
+  <circle cx="112" cy="102" r="6" fill="#123057"/>
+  <circle cx="140" cy="102" r="6" fill="#123057"/>
+  <path d="M110 124 q16 12 32 0" stroke="#123057" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <text x="20" y="205" font-family="sans-serif" font-size="14" font-weight="bold" fill="#fff">Splash Attack</text>
+  <text x="232" y="205" font-family="sans-serif" font-size="14" font-weight="bold" fill="#ffd23f" text-anchor="end">10</text>
+  <text x="20" y="226" font-family="sans-serif" font-size="10" fill="#cfe3ff">Drop your own scan into public/cards/ and</text>
+  <text x="20" y="240" font-family="sans-serif" font-size="10" fill="#cfe3ff">set "image": "/cards/your-file.png" in JSON.</text>
+  <text x="20" y="330" font-family="sans-serif" font-size="9" fill="#9fb8d8">poketcg-ex-sim · example.svg</text>
+</svg>
