@@ -151,23 +151,8 @@ function rolloutScore(game: Game, action: Action): number {
       const card = me.hand.find((c) => c.uid === action.handUid);
       if (!card || !isTrainer(card.def)) return 0;
       const first = card.def.effects[0];
-      switch (first?.op) {
-        case "rareCandy":
-          return 83;
-        case "draw":
-        case "drawPerOpponentPokemon":
-          return me.hand.length <= 4 ? 72 : 44;
-        case "searchDeck":
-          return 58;
-        case "heal": {
-          const worst = Math.max(...game.allInPlay(game.current).map(({ pokemon }) => pokemon.damage), 0);
-          return worst >= 20 ? 48 : 0;
-        }
-        case "switchSelf":
-          return 4;
-        default:
-          return 35;
-      }
+      if (!first) return 0;
+      return game.getEffectAiValue(first, game.current);
     }
     case "playStadium":
       return 30;
