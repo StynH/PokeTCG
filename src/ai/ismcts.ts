@@ -5,7 +5,7 @@ import type { CardLibrary } from "../model/cards";
 import type { AIProfile } from "./profiles";
 import { BALANCED } from "./profiles";
 import { determinize } from "./determinize";
-import { evaluatePosition, heuristicActionScore } from "./simpleAI";
+import { chooseActionSeeded, evaluatePosition, heuristicActionScore } from "./simpleAI";
 
 export interface SearchConfig {
   seed: number;
@@ -38,7 +38,16 @@ interface Node {
 }
 
 function decisionKey(game: Game, decision: Decision): string {
-  if (decision.kind === "choice") return `${decision.choiceId}:${decision.optionId}`;
+  if (decision.kind === "choice") {
+    const option = game.pending?.options.find((candidate, index) =>
+      (candidate.id ?? `option:${index}`) === decision.optionId
+    );
+    return JSON.stringify({
+      kind: "choice",
+      prompt: game.pending?.prompt ?? "",
+      label: option?.label ?? decision.optionId,
+    });
+  }
   const action = decision.action;
   if (!("handUid" in action)) return JSON.stringify(action);
   const cardId = game.players[game.current].hand.find((card) => card.uid === action.handUid)?.def.id;
@@ -66,16 +75,29 @@ function leafValue(game: Game, observer: number, profile: AIProfile): number {
 function chooseRolloutDecision(game: Game, profile: AIProfile, rng: SeededRng): Decision | null {
   const point = game.getDecisionPoint();
   if (!point || point.options.length === 0) return null;
-  let best = point.options[0].decision;
-  let bestScore = -Infinity;
-  for (const option of point.options) {
-    const score = decisionPrior(game, option.decision, profile) + rng.next() * 0.025;
-    if (score > bestScore) {
-      bestScore = score;
-      best = option.decision;
-    }
-  }
-  return best;
+  const scored = point.options.map((option) => ({
+    decision: option.decision,
+    score: decisionPrior(game, option.decision, profile) + rng.next() * 0.025,
+  }));
+  if (scored[0].decision.kind === "choice")
+    return scored.sort((a, b) => b.score - a.score)[0].decision;
+
+  // A Pokemon turn is a sequence, not a single move. Ending it before using
+  // positive setup actions makes otherwise deep rollouts strategically blind.
+  const setup = scored
+    .filter(({ decision }) =>
+      decision.kind === "action" &&
+      decision.action.type !== "attack" &&
+      decision.action.type !== "pass"
+    )
+    .sort((a, b) => b.score - a.score)[0];
+  if (setup && setup.score > 0.18) return setup.decision;
+
+  return scored
+    .filter(({ decision }) => decision.kind === "action" && decision.action.type === "attack")
+    .sort((a, b) => b.score - a.score)[0]?.decision ??
+    scored.find(({ decision }) => decision.kind === "action" && decision.action.type === "pass")?.decision ??
+    scored.sort((a, b) => b.score - a.score)[0].decision;
 }
 
 function rollout(
@@ -121,11 +143,30 @@ export function searchDecision(
   const deadline = started + (config.deadlineMs ?? Infinity);
   const maxIterations = config.maxIterations ?? Infinity;
   const limits = {
-    maxDecisions: config.maxDecisions ?? 120,
-    turnHorizon: config.turnHorizon ?? 3,
+    maxDecisions: config.maxDecisions ?? 200,
+    turnHorizon: config.turnHorizon ?? 5,
   };
   const root = { visits: 0, edges: new Map<string, Edge>() };
   const seedRng = new SeededRng(config.seed);
+  const guidanceVotes = new Map<string, number>();
+  const guidanceWorlds = Number.isFinite(maxIterations)
+    ? Math.min(6, Math.max(2, Math.floor(maxIterations / 32)))
+    : 6;
+  let guidanceTotal = 0;
+
+  for (let world = 0; world < guidanceWorlds && performance.now() < deadline; world++) {
+    const worldSeed = Math.floor(seedRng.next() * 0xffffffff);
+    const game = GameEngine.fromSnapshot(determinize(information, library, worldSeed), library);
+    const action = chooseActionSeeded(
+      game,
+      BALANCED,
+      new SeededRng(worldSeed ^ 0x85ebca6b),
+      2
+    );
+    const key = decisionKey(game, { kind: "action", action });
+    guidanceVotes.set(key, (guidanceVotes.get(key) ?? 0) + 1);
+    guidanceTotal++;
+  }
   let iterations = 0;
 
   while (iterations < maxIterations && performance.now() < deadline) {
@@ -216,9 +257,17 @@ export function searchDecision(
     iterations++;
   }
 
-  const best = [...root.edges.values()].sort((a, b) =>
-    b.visits - a.visits || b.value / Math.max(1, b.visits) - a.value / Math.max(1, a.visits)
-  )[0];
+  const rootCandidates = [...root.edges.values()];
+  const minimumEvidence = Math.max(1, Math.floor(root.visits / Math.max(1, rootCandidates.length) / 3));
+  const best = rootCandidates
+    .filter((edge) => edge.visits >= minimumEvidence)
+    .sort((a, b) => {
+      const score = (edge: Edge) =>
+        edge.value / edge.visits +
+        edge.prior * 0.04 +
+        (guidanceVotes.get(edge.key) ?? 0) / Math.max(1, guidanceTotal) * 0.24;
+      return score(b) - score(a);
+    })[0] ?? rootCandidates.sort((a, b) => b.visits - a.visits)[0];
   if (!best) {
     const game = GameEngine.fromSnapshot(determinize(information, library, config.seed), library);
     const fallback = game.getDecisionPoint()?.options[0]?.decision;

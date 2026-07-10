@@ -19,6 +19,7 @@ export interface ChosenDecision {
 export class AIController {
   private worker: Worker | null = null;
   private requestId = 0;
+  private plannedChoices: Array<{ prompt: string; label: string }> = [];
 
   private createWorker(): Worker {
     this.worker?.terminate();
@@ -29,6 +30,7 @@ export class AIController {
   cancel(): void {
     this.worker?.terminate();
     this.worker = null;
+    this.plannedChoices = [];
   }
 
   async chooseDecision(
@@ -38,9 +40,17 @@ export class AIController {
   ): Promise<ChosenDecision> {
     const revision = game.revision;
     if (game.pending) {
-      let bestIndex = 0;
-      for (let i = 1; i < game.pending.options.length; i++)
-        if (game.pending.options[i].aiScore > game.pending.options[bestIndex].aiScore) bestIndex = i;
+      const planned = this.plannedChoices[0];
+      let bestIndex = planned?.prompt === game.pending.prompt
+        ? game.pending.options.findIndex((option) => option.label === planned.label)
+        : -1;
+      if (bestIndex >= 0) this.plannedChoices.shift();
+      else {
+        this.plannedChoices = [];
+        bestIndex = 0;
+        for (let i = 1; i < game.pending.options.length; i++)
+          if (game.pending.options[i].aiScore > game.pending.options[bestIndex].aiScore) bestIndex = i;
+      }
       const choiceId = game.pending.id!;
       return {
         decision: {
@@ -120,6 +130,18 @@ export class AIController {
           finish({ decision: { kind: "action", action: fallback }, revision, iterations: 0, elapsedMs: 0 });
           return;
         }
+        this.plannedChoices = response.principalVariation
+          .slice(1)
+          .flatMap((key) => {
+            try {
+              const parsed = JSON.parse(key) as { kind?: string; prompt?: string; label?: string };
+              return parsed.kind === "choice" && parsed.prompt && parsed.label
+                ? [{ prompt: parsed.prompt, label: parsed.label }]
+                : [];
+            } catch {
+              return [];
+            }
+          });
         finish({
           decision: response.decision,
           revision,
@@ -131,4 +153,3 @@ export class AIController {
     });
   }
 }
-

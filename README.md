@@ -50,10 +50,10 @@ The browser runs expert information-set search in a Web Worker for up to five se
 
 ```sh
 npm run test:ai
-npm run benchmark:ai -- 5 128 7
+npm run benchmark:ai -- 5 1024 7 mirror
 ```
 
-Benchmark arguments are paired seeds, simulations per expert decision, and deck archetypes. Every selected deck pairing runs with both seat assignments against the frozen rollout policy.
+Benchmark arguments are paired seeds, simulations per expert decision, deck archetypes, and an optional `mirror` mode. Mirror mode isolates policy strength by giving both AIs the same deck; omit it for the full cross-deck matrix.
 
 ## Architecture
 
