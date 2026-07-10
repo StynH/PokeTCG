@@ -1057,7 +1057,7 @@
       "kind": "Poke-Body",
       "name": "Steel Shell",
       "text": "Any damage done to Scizor by attacks from Basic Pokémon (both yours and your opponent's) is reduced by 20 (after applying Weakness and Resistance).",
-      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "self" }]
+      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "self", "attackerBasicOnly": true }]
     },
     "attacks": [
       { "name": "Razor Leaf", "cost": ["Grass", "Colorless"], "damage": 30 },

@@ -15,7 +15,7 @@ import {
 } from "../core/state";
 import { getPokemon, allInPlay, describeSlot } from "../rules/board";
 import { energyUnits, canPayCost, totalEnergyUnits } from "../rules/energy";
-import { modifierMax, modifierSum, conditionsPrevented, effectiveHp, effectiveRetreatCost } from "../rules/modifiers";
+import { modifierMax, modifierSum, damageMinusSum, conditionsPrevented, effectiveHp, effectiveRetreatCost } from "../rules/modifiers";
 import { matchesFilter } from "../rules/filters";
 import type { EffectContext } from "../effects/context";
 import { runEffect, effectCanApply, effectAiValue } from "../effects/registry";
@@ -824,7 +824,11 @@ export class Game {
           amount = Math.max(0, amount - target.guard.amount);
         }
       }
-      const reduction = modifierSum(this.players, ref, this.stadium, "damageMinus");
+      const attacker = context.fromAttack
+        ? this.getPokemon({ p: context.controller, slot: "active" })
+        : null;
+      const attackerIsBasic = attacker?.def.stage === "Basic";
+      const reduction = damageMinusSum(this.players, ref, this.stadium, attackerIsBasic);
       if (reduction > 0 && amount > 0) amount = Math.max(0, amount - reduction);
     }
     if (amount > 0) {

@@ -62,6 +62,21 @@ export function modifierSum(
   return total;
 }
 
+export function damageMinusSum(
+  players: [PlayerState, PlayerState],
+  ref: SlotRef,
+  stadium: StadiumState | null,
+  attackerIsBasic: boolean
+): number {
+  let total = 0;
+  for (const mod of modifiersAffecting(players, ref, stadium)) {
+    if (mod.kind !== "damageMinus") continue;
+    if (mod.attackerBasicOnly && !attackerIsBasic) continue;
+    total += mod.amount;
+  }
+  return total;
+}
+
 export function modifierMax(
   players: [PlayerState, PlayerState],
   ref: SlotRef,

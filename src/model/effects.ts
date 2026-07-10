@@ -23,7 +23,7 @@ export type ScalePer =
 
 export type Modifier =
   | { kind: "damagePlus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType }
-  | { kind: "damageMinus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType }
+  | { kind: "damageMinus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType; attackerBasicOnly?: boolean }
   | { kind: "preventConditions"; scope: ModifierScope }
   | { kind: "retreatDelta"; amount: number; scope: ModifierScope }
   | { kind: "hpPlus"; amount: number; scope: ModifierScope }
