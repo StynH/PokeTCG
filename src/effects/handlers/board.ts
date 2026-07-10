@@ -212,6 +212,23 @@ defineEffect<{ op: "rareCandy" }>({
   aiValue: () => 83,
 });
 
+defineEffect<{ op: "healAllYours"; amount: number }>({
+  op: "healAllYours",
+  run: (e, ctx) => {
+    for (const { pokemon } of ctx.allInPlay(ctx.controller)) {
+      if (pokemon.damage > 0) {
+        const actual = Math.min(pokemon.damage, e.amount);
+        pokemon.damage -= actual;
+        ctx.log(`${pokemon.def.name} heals ${actual} damage`, "heal", { uid: pokemon.card.uid, amount: actual });
+      }
+    }
+  },
+  aiValue: (e, ctx) => {
+    const count = ctx.allInPlay(ctx.controller).filter(({ pokemon }) => pokemon.damage >= e.amount).length;
+    return count * e.amount * 0.25;
+  },
+});
+
 defineEffect<{ op: "flip"; heads: Effect[]; tails: Effect[] }>({
   op: "flip",
   run: (e, ctx) => {

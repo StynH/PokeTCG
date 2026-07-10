@@ -44,6 +44,17 @@ All cards live in [src/data/cards.json](src/data/cards.json), decks in [src/data
 
 See [CARD_SCRIPTING.md](CARD_SCRIPTING.md) for the complete schema, effect op reference, and worked examples.
 
+## Expert AI
+
+The browser runs expert information-set search in a Web Worker for up to five seconds per nontrivial decision. Hidden hand, deck, and prize identities are redacted before crossing the worker boundary. Personalities share the same search budget and tactical evaluator; their weights only provide bounded preferences between strategically close moves.
+
+```sh
+npm run test:ai
+npm run benchmark:ai -- 5 128 7
+```
+
+Benchmark arguments are paired seeds, simulations per expert decision, and deck archetypes. Every selected deck pairing runs with both seat assignments against the frozen rollout policy.
+
 ## Architecture
 
 - [src/model/types.ts](src/model/types.ts) — card schema and effect DSL

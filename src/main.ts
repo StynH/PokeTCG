@@ -4,7 +4,7 @@ import decksJson from "./data/decks.json";
 import type { CardDef } from "./model/types";
 import { buildDeck, buildLibrary, validateDeck } from "./model/loader";
 import { Game } from "./engine/game";
-import { chooseAction, chooseOption } from "./ai/simpleAI";
+import { AIController } from "./ai/controller";
 import {
   type AIProfile,
   BALANCED,
@@ -42,6 +42,9 @@ let game: Game | null = null;
 let aiPlayers = new Set<number>([AI]);
 let aiProfiles: [AIProfile, AIProfile] = [BALANCED, BALANCED];
 let aiTimer: number | null = null;
+let aiAbort: AbortController | null = null;
+let aiInFlight = false;
+const aiController = new AIController();
 let lastTurnSeen = 0;
 let lastConfig: {
   deckOne: string;
@@ -65,6 +68,10 @@ function startGame(
   prizeCount = 6,
   namesOverride?: [string, string]
 ): void {
+  aiAbort?.abort();
+  aiController.cancel();
+  aiInFlight = false;
+  uiState.thinking = false;
   const lists = allDeckLists();
   const decks = [buildDeck(lists[deckOne], library), buildDeck(lists[deckTwo], library)];
   for (const [name, deck] of [[deckOne, decks[0]], [deckTwo, decks[1]]] as const) {
@@ -154,6 +161,10 @@ function aiDelay(current: Game): number {
 function scheduleAI(): void {
   if (!game || game.phase !== "playing") return;
   if (uiState.paused) {
+    aiAbort?.abort();
+    aiController.cancel();
+    aiInFlight = false;
+    uiState.thinking = false;
     if (aiTimer !== null) {
       window.clearTimeout(aiTimer);
       aiTimer = null;
@@ -162,23 +173,47 @@ function scheduleAI(): void {
   }
   const actor = game.pending ? game.pending.player : game.current;
   if (!aiPlayers.has(actor)) return;
-  if (aiTimer !== null) return;
+  if (aiTimer !== null || aiInFlight) return;
   aiTimer = window.setTimeout(() => {
     aiTimer = null;
     if (!game || game.phase !== "playing" || uiState.paused) return;
-    stepAI();
+    void stepAI();
   }, aiDelay(game));
 }
 
-function stepAI(): void {
+async function stepAI(): Promise<void> {
   if (!game || game.phase !== "playing") return;
   const actor = game.pending ? game.pending.player : game.current;
   if (!aiPlayers.has(actor)) return;
   lastTurnSeen = game.turnNumber;
-  if (game.pending) {
-    game.resolvePending(chooseOption(game.pending, aiProfiles[game.pending.player]));
-  } else {
-    game.perform(chooseAction(game, aiProfiles[game.current]));
+  const searchedGame = game;
+  aiAbort?.abort();
+  aiAbort = new AbortController();
+  aiInFlight = true;
+  uiState.thinking = !game.pending;
+  update();
+  try {
+    const chosen = await aiController.chooseDecision(searchedGame, aiProfiles[actor], {
+      seed: (searchedGame.turnNumber * 65537 + searchedGame.revision * 257 + actor * 17) >>> 0,
+      timeBudgetMs: 5000,
+      signal: aiAbort.signal,
+    });
+    if (
+      game !== searchedGame ||
+      game.revision !== chosen.revision ||
+      game.phase !== "playing" ||
+      uiState.paused
+    ) return;
+    game.applyDecision(chosen.decision);
+  } catch (error) {
+    if (!(error instanceof DOMException && error.name === "AbortError")) console.error(error);
+  } finally {
+    if (game === searchedGame) {
+      aiInFlight = false;
+      uiState.thinking = false;
+      aiAbort = null;
+      update();
+    }
   }
 }
 

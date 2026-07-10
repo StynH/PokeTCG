@@ -2777,3 +2777,32 @@ body {
 .standings-table .champ-row .st-name {
   color: #ffd23f;
 }
+.ai-thinking {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.08);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-thinking::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #f5c451;
+  box-shadow: 0 0 10px rgba(245, 196, 81, 0.75);
+  animation: ai-thinking-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes ai-thinking-pulse {
+  from { opacity: 0.45; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-thinking::before { animation: none; }
+}

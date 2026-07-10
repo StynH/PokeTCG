@@ -8,7 +8,10 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "sim": "esbuild scripts/simulate.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/sim.cjs && node node_modules/.cache/sim.cjs",
-    "test:rules": "esbuild scripts/rules-regression.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/rules-regression.cjs && node node_modules/.cache/rules-regression.cjs"
+    "test:rules": "esbuild scripts/rules-regression.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/rules-regression.cjs && node node_modules/.cache/rules-regression.cjs",
+    "test:ai": "esbuild scripts/ai-regression.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/ai-regression.cjs && node node_modules/.cache/ai-regression.cjs",
+    "benchmark:ai": "esbuild scripts/benchmark-ai.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/benchmark-ai.cjs && node node_modules/.cache/benchmark-ai.cjs",
+    "test:cards": "esbuild tests/index.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/card-tests.cjs && node node_modules/.cache/card-tests.cjs"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

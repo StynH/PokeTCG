@@ -5,17 +5,17 @@ import type { AttackDef, CardInstance, EnergyType } from "../model/types";
 import type { AIProfile, StrategyWeights } from "./profiles";
 import { BALANCED } from "./profiles";
 import { pokemonBattleScore } from "./choiceScoring";
+import { SeededRng } from "../core/rng";
 
 const SAMPLES = 4;
 const ROLLOUT_LIMIT = 40;
 const MAX_CANDIDATES = 14;
 const WIN_SCORE = 1e9;
 
-let simSeed = 12345;
+const legacyRandom = new SeededRng(12345);
 
 function nextSeed(): number {
-  simSeed = (simSeed * 1103515245 + 12345) % 2147483647;
-  return simSeed;
+  return Math.floor(legacyRandom.next() * 2147483647);
 }
 
 function flipFactor(w: StrategyWeights): number {
@@ -190,7 +190,7 @@ function sideScore(game: Game, p: number, w: StrategyWeights): number {
   return score;
 }
 
-function evaluate(game: Game, p: number, w: StrategyWeights): number {
+export function evaluatePosition(game: Game, p: number, w: StrategyWeights): number {
   if (game.phase === "finished") return game.winner === p ? WIN_SCORE : -WIN_SCORE;
   const me = game.players[p];
   const opp = game.players[1 - p];
@@ -241,7 +241,7 @@ function retreatRolloutScore(game: Game, benchIndex: number, w: StrategyWeights)
   return score;
 }
 
-function rolloutScore(game: Game, action: Action, w: StrategyWeights): number {
+export function heuristicActionScore(game: Game, action: Action, w: StrategyWeights): number {
   const me = game.players[game.current];
   switch (action.type) {
     case "usePower":
@@ -291,7 +291,7 @@ function rolloutPolicy(game: Game, w: StrategyWeights): Action {
   let best = actions[actions.length - 1];
   let bestScore = -Infinity;
   for (const action of actions) {
-    const score = rolloutScore(game, action, w) + Math.random() * noise;
+    const score = heuristicActionScore(game, action, w) + legacyRandom.next() * noise;
     if (score > bestScore) {
       bestScore = score;
       best = action;
@@ -325,7 +325,7 @@ function simulateAction(game: Game, action: Action, p: number, profile: AIProfil
   playOutTurn(sim, p, w, profile);
   if (sim.phase === "playing" && sim.current !== p)
     playOutTurn(sim, sim.current, BALANCED.weights, BALANCED);
-  return evaluate(sim, p, w);
+  return evaluatePosition(sim, p, w);
 }
 
 function actionKey(game: Game, action: Action): string {
@@ -359,7 +359,7 @@ function candidateActions(game: Game, w: StrategyWeights): Action[] {
     deduped.push(action);
   }
   if (deduped.length <= MAX_CANDIDATES) return deduped;
-  const scored = deduped.map((action) => ({ action, score: rolloutScore(game, action, w) }));
+  const scored = deduped.map((action) => ({ action, score: heuristicActionScore(game, action, w) }));
   scored.sort((a, b) => b.score - a.score);
   const kept = scored.slice(0, MAX_CANDIDATES).map((s) => s.action);
   if (!kept.some((a) => a.type === "pass")) kept.push({ type: "pass" });
@@ -377,7 +377,7 @@ export function chooseAction(game: Game, profile: AIProfile = BALANCED): Action 
     for (let sample = 0; sample < SAMPLES; sample++) {
       total += simulateAction(game, action, p, profile);
     }
-    const value = total / SAMPLES + rolloutScore(game, action, profile.weights) * 1.5 + Math.random() * 2 * profile.weights.risk;
+    const value = total / SAMPLES + heuristicActionScore(game, action, profile.weights) * 1.5 + legacyRandom.next() * 2 * profile.weights.risk;
     if (value > bestValue) {
       bestValue = value;
       best = action;
@@ -391,7 +391,7 @@ export function chooseOption(pending: PendingChoice, profile: AIProfile = BALANC
   let best = 0;
   let bestScore = -Infinity;
   pending.options.forEach((option, i) => {
-    const score = option.aiScore + Math.random() * noise;
+    const score = option.aiScore + legacyRandom.next() * noise;
     if (score > bestScore) {
       bestScore = score;
       best = i;

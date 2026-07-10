@@ -27,10 +27,16 @@ export function modifiersAffecting(
     for (const { ref: sourceRef, pokemon } of allInPlay(players, p)) {
       const isSelf = sourceRef.p === ref.p && sourceRef.slot === ref.slot;
       if (pokemon.def.power?.kind === "Poke-Body") {
-        const bodyModifiers = pokemon.def.power.modifiers?.filter(
-          (modifier) => !("sourceRequiresActive" in modifier) ||
-            !modifier.sourceRequiresActive || sourceRef.slot === "active"
-        );
+        const bodyModifiers = pokemon.def.power.modifiers?.filter((modifier) => {
+          if (modifier.kind === "burnDamage" && modifier.sourceRequiresActive && sourceRef.slot !== "active")
+            return false;
+          if ((modifier.kind === "noWeakness" || modifier.kind === "damageMinus") && modifier.requiresEnergyType) {
+            const needed = modifier.requiresEnergyType;
+            if (!pokemon.energy.some((e) => isEnergy(e.def) && e.def.provides.includes(needed)))
+              return false;
+          }
+          return true;
+        });
         collect(result, bodyModifiers, p, isSelf, ref.p);
       }
       if (pokemon.tool && isTrainer(pokemon.tool.def))
@@ -88,6 +94,14 @@ export function modifierMax(
     if (modifier.kind === kind) highest = Math.max(highest, modifier.amount);
   }
   return highest;
+}
+
+export function weaknessNullified(
+  players: [PlayerState, PlayerState],
+  ref: SlotRef,
+  stadium: StadiumState | null
+): boolean {
+  return modifiersAffecting(players, ref, stadium).some((m) => m.kind === "noWeakness");
 }
 
 export function conditionsPrevented(

@@ -1534,5 +1534,102 @@
     "text": "If the Pokémon Darkness Energy is attached to attacks, the attack does 10 more damage to the Active Pokémon (before applying Weakness and Resistance). Ignore this effect if the Pokémon that Darkness Energy is attached to isn't Darkness. (Doesn't count as a basic Energy card.)",
     "damageRider": 10,
     "damageRiderType": "Darkness"
+  },
+  {
+    "id": "regirock-ex",
+    "name": "Regirock ex",
+    "image": "/cards/regirock-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 110,
+    "types": ["Fighting"],
+    "isEx": true,
+    "weakness": "Water",
+    "retreatCost": 3,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Solid Stone",
+      "text": "As long as Regirock ex has any Fighting Energy attached to it, Regirock ex has no Weakness.",
+      "modifiers": [{ "kind": "noWeakness", "scope": "self", "requiresEnergyType": "Fighting" }]
+    },
+    "attacks": [
+      {
+        "name": "Seismic Feedback",
+        "cost": ["Fighting", "Colorless"],
+        "text": "This attack does 20 damage plus 10 more damage for each Energy attached to the Defending Pokémon.",
+        "effects": [{ "op": "damageScaled", "base": 20, "amount": 10, "per": "defenderEnergy" }]
+      },
+      {
+        "name": "Hammer Arm",
+        "cost": ["Fighting", "Fighting", "Colorless"],
+        "damage": 60,
+        "text": "The Defending Pokémon can't retreat during your opponent's next turn.",
+        "effects": [{ "op": "lockDefending", "what": "retreat" }]
+      }
+    ]
+  },
+  {
+    "id": "dark-registeel",
+    "name": "Dark Registeel",
+    "image": "/cards/dark-registeel.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 80,
+    "types": ["Fighting", "Darkness"],
+    "weakness": "Fire",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Black Iron Coating",
+      "text": "As long as Dark Registeel has any Darkness Energy attached to it, damage done to Dark Registeel by attacks is reduced by 20.",
+      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "self", "requiresEnergyType": "Darkness" }]
+    },
+    "attacks": [
+      {
+        "name": "Corrosive Lockdown",
+        "cost": ["Darkness", "Colorless"],
+        "damage": 20,
+        "text": "The Defending Pokémon is now Poisoned. As long as the Defending Pokémon remains Poisoned, it cannot retreat.",
+        "effects": [
+          { "op": "applyPoison", "target": "defending" },
+          { "op": "lockDefending", "what": "retreat" }
+        ]
+      },
+      {
+        "name": "Shadow Crash",
+        "cost": ["Darkness", "Darkness", "Colorless"],
+        "damage": 60,
+        "text": "Discard a Special Energy card attached to the Defending Pokémon. If you do, this attack does 20 more damage.",
+        "effects": [{ "op": "discardDefenderSpecialEnergyBonus", "bonus": 20 }]
+      }
+    ]
+  },
+  {
+    "id": "light-regice",
+    "name": "Light Regice",
+    "image": "/cards/light-regice.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 90,
+    "types": ["Water", "Colorless"],
+    "weakness": "Fire",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Sacred Ice",
+      "text": "Whenever you attach a basic Water Energy card from your hand to Light Regice, remove 1 damage counter from each of your Pokémon.",
+      "trigger": "onAttachBasicEnergy",
+      "triggerBasicEnergyType": "Water",
+      "effects": [{ "op": "healAllYours", "amount": 10 }]
+    },
+    "attacks": [
+      {
+        "name": "Radiant Ice Beam",
+        "cost": ["Water", "Water", "Colorless"],
+        "damage": 60,
+        "text": "Remove 1 damage counter from each of your Pokémon.",
+        "effects": [{ "op": "healAllYours", "amount": 10 }]
+      }
+    ]
   }
 ]

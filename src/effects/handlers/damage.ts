@@ -263,3 +263,24 @@ defineEffect<{ op: "discardEnergyForDamage"; damagePerEnergy: number; energyType
   run: (e, ctx) => discardEnergyLoop(ctx, e.energyType, e.damagePerEnergy, 0),
   aiValue: (e) => e.damagePerEnergy * 1.5,
 });
+
+defineEffect<{ op: "discardDefenderSpecialEnergyBonus"; bonus: number }>({
+  op: "discardDefenderSpecialEnergyBonus",
+  run: (e, ctx) => {
+    const defender = ctx.players[ctx.opponent].active;
+    if (!defender) return;
+    const idx = defender.energy.findIndex((c) => isEnergy(c.def) && !c.def.isBasic);
+    if (idx === -1) return;
+    const discarded = defender.energy.splice(idx, 1)[0];
+    ctx.players[ctx.opponent].discard.push(discarded);
+    ctx.log(`${discarded.def.name} was discarded from ${defender.def.name}`);
+    if (!ctx.addAttackDamage(e.bonus))
+      ctx.dealDamage({ p: ctx.opponent, slot: "active" }, e.bonus);
+    ctx.log(`+${e.bonus} bonus damage (Special Energy discarded)`);
+  },
+  aiValue: (e, ctx) => {
+    const defender = ctx.players[ctx.opponent].active;
+    if (!defender) return 0;
+    return defender.energy.some((c) => isEnergy(c.def) && !c.def.isBasic) ? e.bonus * 0.8 + 10 : 0;
+  },
+});

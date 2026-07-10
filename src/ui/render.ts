@@ -147,9 +147,15 @@ export interface UIState {
   selectedHandUid: number | null;
   speedFast: boolean;
   paused: boolean;
+  thinking: boolean;
 }
 
-export const uiState: UIState = { selectedHandUid: null, speedFast: false, paused: false };
+export const uiState: UIState = {
+  selectedHandUid: null,
+  speedFast: false,
+  paused: false,
+  thinking: false,
+};
 
 function el(tag: string, className: string, text?: string): HTMLElement {
   const node = document.createElement(tag);
@@ -805,9 +811,15 @@ function renderNowPlaying(game: Game, humanControls: boolean): HTMLElement {
   panel.appendChild(head);
 
   const feed = el("div", "beat-feed");
+  if (uiState.thinking) {
+    const thinking = el("div", "ai-thinking", "Expert AI is thinking…");
+    thinking.setAttribute("role", "status");
+    thinking.setAttribute("aria-live", "polite");
+    feed.appendChild(thinking);
+  }
   const beats = currentBeats.filter((b) => b.cat !== "info" || currentBeats.length <= 3);
   const shown = (beats.length ? beats : currentBeats).slice(-6);
-  if (shown.length === 0) {
+  if (shown.length === 0 && !uiState.thinking) {
     feed.appendChild(el("div", "beat-empty", uiState.paused ? "Paused" : "Waiting for the next move..."));
   }
   shown.forEach((beat, i) => {

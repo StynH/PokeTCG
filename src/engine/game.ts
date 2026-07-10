@@ -3,7 +3,7 @@ import { isEnergy, isPokemon, isTrainer, resistancesOf } from "../model/cards";
 import type { CardLibrary } from "../model/cards";
 import type { Effect } from "../model/effects";
 import type { EnergyType } from "../model/energy";
-import { mulberry32, shuffle } from "../core/rng";
+import { SeededRng, shuffle } from "../core/rng";
 import type { EventCat, GameEvent } from "../core/events";
 import type { ChoiceOption, PendingChoice } from "../core/choice";
 import type { GamePhase, SlotRef, StadiumState } from "../core/state";
@@ -15,7 +15,7 @@ import {
 } from "../core/state";
 import { getPokemon, allInPlay, describeSlot } from "../rules/board";
 import { energyUnits, canPayCost, totalEnergyUnits } from "../rules/energy";
-import { modifierMax, modifierSum, damageMinusSum, conditionsPrevented, effectiveHp, effectiveRetreatCost } from "../rules/modifiers";
+import { modifierMax, modifierSum, damageMinusSum, conditionsPrevented, effectiveHp, effectiveRetreatCost, weaknessNullified } from "../rules/modifiers";
 import { matchesFilter } from "../rules/filters";
 import type { EffectContext } from "../effects/context";
 import { runEffect, effectCanApply, effectAiValue } from "../effects/registry";
@@ -47,6 +47,7 @@ function isEffectDoneToDefendingPokemon(effect: Effect): boolean {
     case "damageIfDefenderSpecialEnergy":
     case "damageIfDefenderResistance":
     case "discardOpponentEnergy":
+    case "discardDefenderSpecialEnergyBonus":
     case "gustOpponent":
       return true;
     case "damageCounters":
@@ -68,6 +69,45 @@ export type Action =
   | { type: "attack"; index: number }
   | { type: "pass" };
 
+export type Decision =
+  | { kind: "action"; action: Action }
+  | { kind: "choice"; choiceId: string; optionId: string };
+
+export interface DecisionOption {
+  id: string;
+  label: string;
+  decision: Decision;
+}
+
+export interface DecisionPoint {
+  actor: number;
+  id: string;
+  options: DecisionOption[];
+}
+
+export interface GameSnapshot {
+  players: [PlayerState, PlayerState];
+  initialDeckIds: [string[], string[]];
+  stadium: StadiumState | null;
+  current: number;
+  turnNumber: number;
+  phase: GamePhase;
+  winner: number | null;
+  suddenDeath: boolean;
+  winReason: string;
+  prizeCount: number;
+  uidCounter: number;
+  eventSeq: number;
+  rngState: number;
+  revision: number;
+}
+
+export interface InformationState {
+  observer: number;
+  snapshot: GameSnapshot;
+  key: string;
+}
+
 export class Game {
   players: [PlayerState, PlayerState];
   stadium: StadiumState | null = null;
@@ -81,10 +121,13 @@ export class Game {
   events: GameEvent[] = [];
   pending: PendingChoice | null = null;
   onChange: () => void = () => {};
+  revision = 0;
 
   private library: CardLibrary;
-  private rng: () => number;
+  private rng: SeededRng;
+  private initialDeckIds: [string[], string[]];
   private eventSeq = 0;
+  private choiceSeq = 0;
   private uidCounter = 1;
   private thunks: Array<() => void> = [];
   private turnEnding = false;
@@ -100,7 +143,8 @@ export class Game {
     prizeCount = PRIZE_COUNT
   ) {
     this.library = library;
-    this.rng = mulberry32(seed);
+    this.rng = new SeededRng(seed);
+    this.initialDeckIds = [deckA.map((card) => card.id), deckB.map((card) => card.id)];
     this.prizeCount = prizeCount;
     this.players = [this.makePlayer(names[0], deckA), this.makePlayer(names[1], deckB)];
     if (prizeCount < PRIZE_COUNT)
@@ -122,17 +166,147 @@ export class Game {
     clone.pending = null;
     clone.onChange = () => {};
     clone.library = this.library;
-    clone.rng = mulberry32(seed);
+    clone.rng = new SeededRng(seed);
+    clone.initialDeckIds = [
+      [...this.initialDeckIds[0]],
+      [...this.initialDeckIds[1]],
+    ];
     clone.eventSeq = 0;
+    clone.choiceSeq = this.choiceSeq;
     clone.uidCounter = this.uidCounter;
     clone.thunks = [];
     clone.turnEnding = false;
     clone.turnStarting = false;
     clone.prizeCount = this.prizeCount;
     clone.suddenDeath = this.suddenDeath;
-    shuffle(clone.rng, clone.players[0].deck);
-    shuffle(clone.rng, clone.players[1].deck);
+    clone.revision = this.revision;
+    shuffle(() => clone.rng.next(), clone.players[0].deck);
+    shuffle(() => clone.rng.next(), clone.players[1].deck);
     return clone;
+  }
+
+  toSnapshot(): GameSnapshot {
+    if (this.pending || this.thunks.length > 0)
+      throw new Error("Game snapshots require a stable decision point");
+    return {
+      players: [clonePlayer(this.players[0]), clonePlayer(this.players[1])],
+      initialDeckIds: [[...this.initialDeckIds[0]], [...this.initialDeckIds[1]]],
+      stadium: this.stadium ? { ...this.stadium } : null,
+      current: this.current,
+      turnNumber: this.turnNumber,
+      phase: this.phase,
+      winner: this.winner,
+      suddenDeath: this.suddenDeath,
+      winReason: this.winReason,
+      prizeCount: this.prizeCount,
+      uidCounter: this.uidCounter,
+      eventSeq: this.eventSeq,
+      rngState: this.rng.snapshot(),
+      revision: this.revision,
+    };
+  }
+
+  static fromSnapshot(snapshot: GameSnapshot, library: CardLibrary): Game {
+    const game: Game = Object.create(Game.prototype);
+    game.players = [clonePlayer(snapshot.players[0]), clonePlayer(snapshot.players[1])];
+    game.initialDeckIds = [
+      [...snapshot.initialDeckIds[0]],
+      [...snapshot.initialDeckIds[1]],
+    ];
+    game.stadium = snapshot.stadium ? { ...snapshot.stadium } : null;
+    game.current = snapshot.current;
+    game.turnNumber = snapshot.turnNumber;
+    game.phase = snapshot.phase;
+    game.winner = snapshot.winner;
+    game.suddenDeath = snapshot.suddenDeath;
+    game.winReason = snapshot.winReason;
+    game.log = [];
+    game.events = [];
+    game.pending = null;
+    game.onChange = () => {};
+    game.revision = snapshot.revision;
+    game.library = library;
+    game.rng = new SeededRng(snapshot.rngState);
+    game.eventSeq = snapshot.eventSeq;
+    game.choiceSeq = 0;
+    game.uidCounter = snapshot.uidCounter;
+    game.thunks = [];
+    game.turnEnding = false;
+    game.turnStarting = false;
+    game.prizeCount = snapshot.prizeCount;
+    return game;
+  }
+
+  getInformationState(observer: number): InformationState {
+    const snapshot = this.toSnapshot();
+    for (let p = 0; p < 2; p++) {
+      const placeholder = this.library[snapshot.initialDeckIds[p][0]];
+      if (!placeholder) throw new Error(`Cannot redact unknown deck for player ${p}`);
+      const player = snapshot.players[p];
+      const redact = (zone: CardInstance[]) => zone.map((card) => ({ uid: card.uid, def: placeholder }));
+      player.deck = redact(player.deck);
+      player.prizes = redact(player.prizes);
+      if (p !== observer) player.hand = redact(player.hand);
+    }
+    const visible = (p: number) => ({
+      active: snapshot.players[p].active?.card.def.id ?? null,
+      bench: snapshot.players[p].bench.map((pokemon) => pokemon.card.def.id),
+      discard: snapshot.players[p].discard.map((card) => card.def.id).sort(),
+      hand: p === observer ? snapshot.players[p].hand.map((card) => card.def.id).sort() : snapshot.players[p].hand.length,
+      deck: snapshot.players[p].deck.length,
+      prizes: snapshot.players[p].prizes.length,
+    });
+    return {
+      observer,
+      snapshot,
+      key: JSON.stringify({
+        revision: snapshot.revision,
+        current: snapshot.current,
+        turn: snapshot.turnNumber,
+        stadium: snapshot.stadium?.card.def.id ?? null,
+        players: [visible(0), visible(1)],
+      }),
+    };
+  }
+
+  getDecisionPoint(): DecisionPoint | null {
+    if (this.phase !== "playing") return null;
+    if (this.pending) {
+      const choiceId = this.pending.id ?? `choice:${this.turnNumber}:${this.current}`;
+      return {
+        actor: this.pending.player,
+        id: choiceId,
+        options: this.pending.options.map((option, index) => {
+          const optionId = option.id ?? `option:${index}`;
+          return {
+            id: optionId,
+            label: option.label,
+            decision: { kind: "choice", choiceId, optionId },
+          };
+        }),
+      };
+    }
+    return {
+      actor: this.current,
+      id: `action:${this.revision}`,
+      options: this.getLegalActions().map((action) => ({
+        id: JSON.stringify(action),
+        label: this.describeAction(action),
+        decision: { kind: "action", action },
+      })),
+    };
+  }
+
+  applyDecision(decision: Decision): void {
+    if (decision.kind === "action") {
+      this.perform(decision.action);
+      return;
+    }
+    if (!this.pending || this.pending.id !== decision.choiceId) return;
+    const index = this.pending.options.findIndex((option, i) =>
+      (option.id ?? `option:${i}`) === decision.optionId
+    );
+    if (index >= 0) this.resolvePending(index);
   }
 
   // ── Public query helpers (render.ts / simpleAI.ts) ──────────────────────
@@ -326,6 +500,14 @@ export class Game {
           player: this.current,
           uid: pokemon.card.uid,
         });
+        const power = pokemon.def.power;
+        if (power?.trigger === "onAttachBasicEnergy" && power.effects && isEnergy(card.def) && card.def.isBasic) {
+          const typeMatch = !power.triggerBasicEnergyType || card.def.provides.includes(power.triggerBasicEnergyType);
+          if (typeMatch) {
+            this.addLog(`${power.name} triggers!`, "power", { player: this.current, uid: pokemon.card.uid });
+            this.queueEffectsFor(power.effects, this.current, undefined, false, action.target);
+          }
+        }
         break;
       }
       case "playTrainer": {
@@ -414,6 +596,7 @@ export class Game {
         this.turnEnding = true;
         break;
     }
+    this.revision++;
     this.drain();
   }
 
@@ -424,6 +607,7 @@ export class Game {
     if (!option) return;
     this.pending = null;
     option.apply();
+    this.revision++;
     this.drain();
   }
 
@@ -449,12 +633,12 @@ export class Game {
     const mulligans = [0, 0];
     for (let p = 0; p < 2; p++) {
       const player = this.players[p];
-      shuffle(this.rng, player.deck);
+      shuffle(() => this.rng.next(), player.deck);
       player.hand = player.deck.splice(0, STARTING_HAND);
       while (!player.hand.some((c) => isPokemon(c.def) && c.def.stage === "Basic")) {
         mulligans[p]++;
         player.deck.push(...player.hand.splice(0));
-        shuffle(this.rng, player.deck);
+        shuffle(() => this.rng.next(), player.deck);
         player.hand = player.deck.splice(0, STARTING_HAND);
       }
       if (mulligans[p] > 0) this.addLog(`${player.name} mulliganed ${mulligans[p]} time(s)`);
@@ -518,7 +702,7 @@ export class Game {
   }
 
   private flipCoin(context: string): boolean {
-    const heads = this.rng() < 0.5;
+    const heads = this.rng.next() < 0.5;
     this.addLog(`${context}: ${heads ? "Heads" : "Tails"}`, "coin");
     return heads;
   }
@@ -565,7 +749,13 @@ export class Game {
 
   private requestChoice(player: number, prompt: string, options: ChoiceOption[]): void {
     if (options.length === 0) return;
-    this.pending = { player, prompt, options };
+    const id = `choice:${this.turnNumber}:${++this.choiceSeq}`;
+    this.pending = {
+      id,
+      player,
+      prompt,
+      options: options.map((option, index) => ({ ...option, id: option.id ?? `option:${index}` })),
+    };
   }
 
   private rareCandyPairs(
@@ -671,7 +861,7 @@ export class Game {
             def.evolvesFrom === basicName
         ),
       drawCards: (p, count) => game.drawCards(p, count),
-      shuffleDeck: (p) => shuffle(game.rng, game.players[p].deck),
+      shuffleDeck: (p) => shuffle(() => game.rng.next(), game.players[p].deck),
       swapActive: (p, i) => game.swapActive(p, i),
       evolvePokemon: (pokemon, card) => game.evolvePokemon(pokemon, card),
       takeFromHand: (player, uid) => game.takeFromHand(player, uid),
@@ -806,7 +996,7 @@ export class Game {
     const applyWR = applyWROverride ?? (ref.slot === "active" && ref.p !== context.controller);
     const attackerTypes = context.attackerTypes ?? [];
     if (applyWR && attackerTypes.length > 0 && amount > 0) {
-      if (target.def.weakness && attackerTypes.includes(target.def.weakness)) {
+      if (target.def.weakness && attackerTypes.includes(target.def.weakness) && !weaknessNullified(this.players, ref, this.stadium)) {
         amount *= 2;
         this.addLog("It's weak! Damage doubled");
       }

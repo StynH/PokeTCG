@@ -23,7 +23,8 @@ export type ScalePer =
 
 export type Modifier =
   | { kind: "damagePlus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType }
-  | { kind: "damageMinus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType; attackerBasicOnly?: boolean }
+  | { kind: "damageMinus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType; requiresEnergyType?: EnergyType; attackerBasicOnly?: boolean }
+  | { kind: "noWeakness"; scope: ModifierScope; requiresEnergyType?: EnergyType }
   | { kind: "preventConditions"; scope: ModifierScope }
   | { kind: "retreatDelta"; amount: number; scope: ModifierScope }
   | { kind: "hpPlus"; amount: number; scope: ModifierScope }
@@ -82,4 +83,6 @@ export type Effect =
   | { op: "discardOpponentHand"; count: number }
   | { op: "drawToHandSize"; size: number }
   | { op: "peekTopDeck"; count: number; filter?: CardFilter }
-  | { op: "energyRestoreFlips"; flips: number };
+  | { op: "energyRestoreFlips"; flips: number }
+  | { op: "healAllYours"; amount: number }
+  | { op: "discardDefenderSpecialEnergyBonus"; bonus: number };
