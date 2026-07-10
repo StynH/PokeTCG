@@ -70,21 +70,25 @@ defineEffect<{ op: "applyBurn"; target: "defending" }>({
 defineEffect<{ op: "protectNextTurn"; mode: "preventAll" | "reduce"; amount?: number }>({
   op: "protectNextTurn",
   run: (e, ctx) => {
-    const attacker = ctx.players[ctx.controller].active;
-    if (attacker) {
-      attacker.guard = {
+    const source = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : ctx.players[ctx.controller].active;
+    if (source) {
+      source.guard = {
         mode: e.mode,
         amount: e.amount ?? 0,
         untilTurn: ctx.turnNumber + 1,
       };
       ctx.log(
         e.mode === "preventAll"
-          ? `${attacker.def.name} prevents all damage next turn`
-          : `${attacker.def.name} reduces damage by ${e.amount ?? 0} next turn`
+          ? `${source.def.name} prevents all effects of attacks next turn`
+          : `${source.def.name} reduces damage by ${e.amount ?? 0} next turn`
       );
     }
   },
-  aiValue: (e) => (e.mode === "preventAll" ? 30 : (e.amount ?? 0) * 0.4),
+  aiValue: (e, ctx) => {
+    const isActiveSource = ctx.sourceRef?.slot === "active";
+    if (e.mode === "preventAll") return isActiveSource ? 46 : 4;
+    return (e.amount ?? 0) * (isActiveSource ? 0.5 : 0.1);
+  },
 });
 
 defineEffect<{ op: "lockDefending"; what: "attack" | "retreat" }>({

@@ -4,6 +4,7 @@ import { isTrainer, resistancesOf } from "../model/types";
 import type { AttackDef, CardInstance, EnergyType } from "../model/types";
 import type { AIProfile, StrategyWeights } from "./profiles";
 import { BALANCED } from "./profiles";
+import { pokemonBattleScore } from "./choiceScoring";
 
 const SAMPLES = 4;
 const ROLLOUT_LIMIT = 40;
@@ -23,10 +24,13 @@ function flipFactor(w: StrategyWeights): number {
 
 function expectedDamage(attack: AttackDef, pokemon: PokemonInPlay | undefined, w: StrategyWeights): number {
   const flips = flipFactor(w);
-  let damage = (attack.damage ?? 0) + (pokemon?.attackBonus ?? 0);
+  const boost = pokemon?.attackBoost;
+  let damage =
+    (attack.damage ?? 0) +
+    (boost && (!boost.attackName || boost.attackName === attack.name) ? boost.amount : 0);
   for (const effect of attack.effects ?? []) {
     if (effect.op === "damagePerHeads") damage += effect.flips * effect.amount * flips;
-    if (effect.op === "damage") damage += effect.amount * 0.8;
+    if (effect.op === "damage") damage += effect.amount;
     if (effect.op === "damageCounters") damage += effect.count * 10 * 0.8;
     if (effect.op === "flip") {
       for (const sub of effect.heads) {
@@ -95,7 +99,17 @@ function attachEnergyScore(game: Game, card: CardInstance, target: PokemonInPlay
     if (after === 0) enabledDamage = Math.max(enabledDamage, damage);
     else progressedDamage = Math.max(progressedDamage, damage);
   }
-  const bonus = active ? 8 : 0;
+  const board = game.allInPlay(owner);
+  const targetBattleValue = pokemonBattleScore(game, target, owner, active);
+  const bestBattleValue = Math.max(
+    targetBattleValue,
+    ...board.map(({ ref, pokemon }) =>
+      pokemonBattleScore(game, pokemon, owner, ref.slot === "active")
+    )
+  );
+  const primaryBonus = targetBattleValue >= bestBattleValue - 1 ? 24 : 0;
+  const focusBonus = Math.min(21, target.energy.length * 7);
+  const bonus = (active ? 28 : 0) + primaryBonus + focusBonus;
   if (enabledDamage > 0) return 80 + Math.min(45, enabledDamage * 0.55) + bonus;
   if (progressedDamage > 0) return 52 + Math.min(34, progressedDamage * 0.4) + bonus;
   if (!needsAny) return 18;
@@ -123,8 +137,13 @@ function bestAffordableDamage(game: Game, attacker: PokemonInPlay, owner: number
     if (!game.canPayCost(attack.cost, attacker, owner)) continue;
     let damage = expectedDamage(attack, attacker, w);
     if (defender && damage > 0) {
-      if (defender.def.weakness && types.includes(defender.def.weakness)) damage *= 2;
-      if (resistancesOf(defender.def).some((r) => types.includes(r))) damage = Math.max(0, damage - 30);
+      const ignoresBoth = attack.effects?.some(
+        (effect) => effect.op === "damage" && effect.applyWR === false &&
+          (effect.target === "defending" || effect.target === "anyOpponentChoice")
+      ) ?? false;
+      if (!ignoresBoth && defender.def.weakness && types.includes(defender.def.weakness)) damage *= 2;
+      if (!ignoresBoth && !attack.ignoreResistance && resistancesOf(defender.def).some((r) => types.includes(r)))
+        damage = Math.max(0, damage - 30);
     }
     best = Math.max(best, damage);
   }
@@ -152,7 +171,18 @@ function sideScore(game: Game, p: number, w: StrategyWeights): number {
     if (pokemon.underneath.length > 0) score += 18 * w.setup;
     const damage = bestAffordableDamage(game, pokemon, p, ref.slot === "active" ? oppActive : null, w);
     score += damage * (ref.slot === "active" ? 1.6 : 0.5) * (0.5 + 0.5 * w.aggression);
+    score += pokemon.energy.length * (5 + 5 * w.defense);
     if (pokemon.def.isEx) score -= (pokemon.damage / pokemon.def.hp) * 120 * w.defense;
+  }
+  if (player.active && oppActive) {
+    const activeDamage = bestAffordableDamage(game, player.active, p, oppActive, w);
+    const readyBenchDamage = Math.max(
+      0,
+      ...player.bench.map((pokemon) => bestAffordableDamage(game, pokemon, p, oppActive, w))
+    );
+    if (activeDamage === 0 && readyBenchDamage > 0)
+      score -= (90 + readyBenchDamage * 0.8) * (0.7 + 0.3 * w.defense);
+    if (activeDamage > 0) score += 35 * w.defense;
   }
   score += Math.min(player.hand.length, 9) * 8 * (0.5 + 0.5 * w.setup);
   if (player.deck.length < 3) score -= (3 - player.deck.length) * 150;
@@ -186,26 +216,41 @@ function evaluate(game: Game, p: number, w: StrategyWeights): number {
   return score;
 }
 
-function retreatRolloutScore(game: Game, w: StrategyWeights): number {
+function retreatRolloutScore(game: Game, benchIndex: number, w: StrategyWeights): number {
   const me = game.players[game.current];
   const active = me.active;
+  const target = me.bench[benchIndex];
   const opp = game.players[1 - game.current].active;
-  if (!active || !opp) return 2;
+  if (!active || !target || !opp) return -100;
   const hpLeft = active.def.hp - active.damage;
   const threat = bestAffordableDamage(game, opp, 1 - game.current, active, w);
   const doomed = threat >= hpLeft;
-  const stuck = bestAffordableDamage(game, active, game.current, opp, w) === 0;
-  if (doomed && active.def.isEx) return 50 * w.defense;
-  if (doomed) return 26 * w.defense;
-  if (stuck) return 20;
-  return 2;
+  const activeDamage = bestAffordableDamage(game, active, game.current, opp, w);
+  const targetDamage = bestAffordableDamage(game, target, game.current, opp, w);
+  const stuck = activeDamage === 0 || active.condition === "asleep" || active.condition === "paralyzed";
+  const cost = game.effectiveRetreatCost({ p: game.current, slot: "active" }, active);
+  const discardPenalty = cost * (34 + 12 * w.defense);
+  const positionGain =
+    pokemonBattleScore(game, target, game.current, true) -
+    pokemonBattleScore(game, active, game.current, true);
+  let score = positionGain + (targetDamage - activeDamage) * 0.9 - discardPenalty;
+  if (stuck && targetDamage > 0) score += 115;
+  if (doomed) score += (active.def.isEx ? 105 : 65) * w.defense;
+  if (!doomed && !stuck && activeDamage > 0) score -= 90;
+  if (targetDamage === 0) score -= 75;
+  return score;
 }
 
 function rolloutScore(game: Game, action: Action, w: StrategyWeights): number {
   const me = game.players[game.current];
   switch (action.type) {
     case "usePower":
-      return 88;
+      {
+        const pokemon = game.getPokemon(action.target);
+        return pokemon?.def.power
+          ? game.getEffectsAiValue(pokemon.def.power.effects ?? [], game.current, action.target)
+          : -100;
+      }
     case "playBasic":
       return me.bench.length < 4 ? 78 + 8 * w.setup : 55;
     case "evolve":
@@ -219,9 +264,7 @@ function rolloutScore(game: Game, action: Action, w: StrategyWeights): number {
     case "playTrainer": {
       const card = me.hand.find((c) => c.uid === action.handUid);
       if (!card || !isTrainer(card.def)) return 0;
-      const first = card.def.effects[0];
-      if (!first) return 0;
-      return game.getEffectAiValue(first, game.current);
+      return game.getEffectsAiValue(card.def.effects, game.current);
     }
     case "playStadium":
       return 30;
@@ -236,7 +279,7 @@ function rolloutScore(game: Game, action: Action, w: StrategyWeights): number {
       return 82 + dmg * 0.35 * (0.7 + 0.3 * w.aggression) + koBonus;
     }
     case "retreat":
-      return retreatRolloutScore(game, w);
+      return retreatRolloutScore(game, action.benchIndex, w);
     case "pass":
       return 1;
   }

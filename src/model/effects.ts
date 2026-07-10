@@ -27,7 +27,8 @@ export type Modifier =
   | { kind: "preventConditions"; scope: ModifierScope }
   | { kind: "retreatDelta"; amount: number; scope: ModifierScope }
   | { kind: "hpPlus"; amount: number; scope: ModifierScope }
-  | { kind: "blockOpponentStadium"; scope: ModifierScope };
+  | { kind: "blockOpponentStadium"; scope: ModifierScope }
+  | { kind: "burnDamage"; amount: number; scope: ModifierScope; sourceRequiresActive?: boolean };
 
 export interface CardFilter {
   supertype?: "Pokemon" | "Trainer" | "Energy";
@@ -41,7 +42,7 @@ export interface CardFilter {
 }
 
 export type Effect =
-  | { op: "damage"; amount: number; target: EffectTarget; applyWR?: boolean; ignoreResistance?: boolean }
+  | { op: "damage"; amount: number; target: EffectTarget; applyWR?: boolean; ignoreResistance?: boolean; ignoreDefenderEffects?: boolean }
   | { op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType }
   | { op: "recoil"; amount: number }
   | { op: "protectNextTurn"; mode: "preventAll" | "reduce"; amount?: number }
@@ -57,7 +58,7 @@ export type Effect =
   | { op: "heal"; amount: number; target: EffectTarget }
   | { op: "draw"; count: number }
   | { op: "drawPerOpponentPokemon" }
-  | { op: "discardFromHand"; count: number }
+  | { op: "discardFromHand"; count: number; energyType?: EnergyType }
   | { op: "discardSelfEnergy"; count: number | "all"; energyType?: EnergyType }
   | { op: "applyCondition"; condition: Condition; target: "defending" }
   | { op: "applyPoison"; target: "defending"; counters?: number }
@@ -71,7 +72,7 @@ export type Effect =
   | { op: "attachEnergyFromHand"; energyType?: EnergyType; target: "anySelfChoice" | "self" }
   | { op: "attachEnergyFromDeck"; energyType: EnergyType; basicOnly?: boolean; targetType?: EnergyType }
   | { op: "rareCandy" }
-  | { op: "nextAttackBonus"; amount: number }
+  | { op: "nextAttackBonus"; amount: number; attackName?: string }
   | { op: "damageIfStatus"; bonus: number; status: "burned" | "poisoned" | Condition }
   | { op: "damageIfDefenderNoEnergy"; bonus: number }
   | { op: "damageIfDefenderSpecialEnergy"; bonus: number }

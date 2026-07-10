@@ -13,11 +13,18 @@ defineEffect<{
   target: EffectTarget;
   applyWR?: boolean;
   ignoreResistance?: boolean;
+  ignoreDefenderEffects?: boolean;
 }>({
   op: "damage",
   run: (e, ctx) => {
     ctx.forEachTarget(e.target, `Deal ${e.amount} damage to`, (ref) => {
-      ctx.dealDamage(ref, e.amount, e.applyWR, e.ignoreResistance);
+      if (
+        e.applyWR !== false &&
+        ref.p === ctx.opponent &&
+        ref.slot === "active" &&
+        ctx.addAttackDamage(e.amount, e.ignoreResistance)
+      ) return;
+      ctx.dealDamage(ref, e.amount, e.applyWR, e.ignoreResistance, e.ignoreDefenderEffects);
     });
   },
   aiValue: (e) => e.amount * 0.8,
@@ -62,7 +69,7 @@ defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; 
       case "oppBench":               count = ctx.players[ctx.opponent].bench.length; break;
     }
     const total = e.base + e.amount * count;
-    if (total > 0) ctx.dealDamage(defendingRef, total);
+    if (total > 0 && !ctx.addAttackDamage(total)) ctx.dealDamage(defendingRef, total);
   },
   aiValue: (e) => e.base + e.amount * 2,
 });
@@ -89,7 +96,10 @@ defineEffect<{ op: "damagePerHeads"; flips: number; amount: number; target: Effe
     for (let i = 0; i < e.flips; i++) if (ctx.flip("Coin flip")) heads++;
     const total = heads * e.amount;
     if (total > 0) {
-      ctx.forEachTarget(e.target, `Deal ${total} damage to`, (ref) => ctx.dealDamage(ref, total));
+      ctx.forEachTarget(e.target, `Deal ${total} damage to`, (ref) => {
+        if (ref.p === ctx.opponent && ref.slot === "active" && ctx.addAttackDamage(total)) return;
+        ctx.dealDamage(ref, total);
+      });
     } else if (e.recoilIfNoHeads) {
       const attacker = ctx.players[ctx.controller].active;
       if (attacker) {
@@ -119,18 +129,24 @@ defineEffect<{ op: "damagePerFlipsPerEnergy"; base: number; amount: number; ener
     let heads = 0;
     for (let i = 0; i < energyCount; i++) if (ctx.flip("Coin flip")) heads++;
     const total = e.base + e.amount * heads;
-    if (total > 0) ctx.dealDamage({ p: ctx.opponent, slot: "active" }, total);
+    if (total > 0 && !ctx.addAttackDamage(total))
+      ctx.dealDamage({ p: ctx.opponent, slot: "active" }, total);
   },
   aiValue: (e) => e.base + e.amount * 1.5,
 });
 
-defineEffect<{ op: "nextAttackBonus"; amount: number }>({
+defineEffect<{ op: "nextAttackBonus"; amount: number; attackName?: string }>({
   op: "nextAttackBonus",
   run: (e, ctx) => {
-    const attacker = ctx.players[ctx.controller].active;
+    const attacker = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : ctx.players[ctx.controller].active;
     if (attacker) {
-      attacker.attackBonus += e.amount;
-      ctx.log(`${attacker.def.name}'s next attack does ${e.amount} more damage`);
+      attacker.attackBoost = {
+        amount: e.amount,
+        attackName: e.attackName,
+        usableTurn: ctx.turnNumber + 2,
+      };
+      const attack = e.attackName ? ` ${e.attackName}` : "";
+      ctx.log(`${attacker.def.name}'s next${attack} attack does ${e.amount} more damage`);
     }
   },
   aiValue: (e) => e.amount * 0.6,
@@ -148,7 +164,7 @@ defineEffect<{ op: "damageIfStatus"; bonus: number; status: "burned" | "poisoned
           ? defender.poisonCounters > 0
           : defender.condition === e.status;
     if (hasStatus) {
-      defender.damage += e.bonus;
+      if (!ctx.addAttackDamage(e.bonus)) defender.damage += e.bonus;
       ctx.log(`+${e.bonus} bonus damage (${e.status})`);
     }
   },
@@ -160,7 +176,7 @@ defineEffect<{ op: "damageIfDefenderNoEnergy"; bonus: number }>({
   run: (e, ctx) => {
     const defender = ctx.players[ctx.opponent].active;
     if (defender && defender.energy.length === 0) {
-      defender.damage += e.bonus;
+      if (!ctx.addAttackDamage(e.bonus)) defender.damage += e.bonus;
       ctx.log(`+${e.bonus} bonus damage (no energy on defender)`);
     }
   },
@@ -174,7 +190,7 @@ defineEffect<{ op: "damageIfDefenderSpecialEnergy"; bonus: number }>({
     if (!defender) return;
     const hasSpecial = defender.energy.some((c) => isEnergy(c.def) && !c.def.isBasic);
     if (hasSpecial) {
-      defender.damage += e.bonus;
+      if (!ctx.addAttackDamage(e.bonus)) defender.damage += e.bonus;
       ctx.log(`+${e.bonus} bonus damage (Special Energy on defender)`);
     }
   },
@@ -187,7 +203,7 @@ defineEffect<{ op: "damageIfDefenderResistance"; resistanceType: EnergyType; bon
     const defender = ctx.players[ctx.opponent].active;
     if (!defender) return;
     if (resistancesOf(defender.def).includes(e.resistanceType)) {
-      defender.damage += e.bonus;
+      if (!ctx.addAttackDamage(e.bonus)) defender.damage += e.bonus;
       ctx.log(`+${e.bonus} bonus damage (defender has ${e.resistanceType} Resistance)`);
     }
   },
@@ -204,7 +220,11 @@ function discardEnergyLoop(
   const active = ctx.players[p].active;
   const finish = () => {
     if (discarded > 0)
-      ctx.queueThunk(() => ctx.dealDamage({ p: ctx.opponent, slot: "active" }, discarded * damagePerEnergy));
+      ctx.queueThunk(() => {
+        const amount = discarded * damagePerEnergy;
+        if (!ctx.addAttackDamage(amount))
+          ctx.dealDamage({ p: ctx.opponent, slot: "active" }, amount);
+      });
   };
   if (!active) { finish(); return; }
   const matches = (c: CardInstance) =>

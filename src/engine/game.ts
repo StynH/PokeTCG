@@ -15,10 +15,11 @@ import {
 } from "../core/state";
 import { getPokemon, allInPlay, describeSlot } from "../rules/board";
 import { energyUnits, canPayCost, totalEnergyUnits } from "../rules/energy";
-import { modifierSum, conditionsPrevented, effectiveHp, effectiveRetreatCost } from "../rules/modifiers";
+import { modifierMax, modifierSum, conditionsPrevented, effectiveHp, effectiveRetreatCost } from "../rules/modifiers";
 import { matchesFilter } from "../rules/filters";
 import type { EffectContext } from "../effects/context";
 import { runEffect, effectCanApply, effectAiValue } from "../effects/registry";
+import { pokemonBattleScore } from "../ai/choiceScoring";
 import "../effects/handlers/index";
 
 // Re-export types that outer consumers (render.ts, simpleAI.ts, simulate.ts) import from here
@@ -29,6 +30,31 @@ export type { PokemonInPlay, PlayerState, SlotRef, GamePhase, StadiumState } fro
 export const PRIZE_COUNT = 6;
 const BENCH_LIMIT = 5;
 const STARTING_HAND = 7;
+
+interface AttackDamageTotal {
+  amount: number;
+  ignoreResistance: boolean;
+}
+
+function isEffectDoneToDefendingPokemon(effect: Effect): boolean {
+  switch (effect.op) {
+    case "applyCondition":
+    case "applyPoison":
+    case "applyBurn":
+    case "lockDefending":
+    case "damageIfStatus":
+    case "damageIfDefenderNoEnergy":
+    case "damageIfDefenderSpecialEnergy":
+    case "damageIfDefenderResistance":
+    case "discardOpponentEnergy":
+    case "gustOpponent":
+      return true;
+    case "damageCounters":
+      return effect.target === "defending";
+    default:
+      return false;
+  }
+}
 
 export type Action =
   | { type: "playBasic"; handUid: number }
@@ -202,8 +228,8 @@ export class Game {
       if (!power?.usable) continue;
       if (power.oncePerTurn && pokemon.powerUsedTurn === this.turnNumber) continue;
       if (power.requiresActive && ref.slot !== "active") continue;
-      if (pokemon.condition) continue;
-      if (this.powerHasValidUse(power.effects ?? []))
+      if (pokemon.condition || pokemon.poisonCounters > 0 || pokemon.burned) continue;
+      if (this.powerHasValidUse(power.effects ?? [], ref))
         actions.push({ type: "usePower", target: ref });
     }
 
@@ -475,7 +501,7 @@ export class Game {
         const def = card.def as PokemonCardDef;
         return {
           label: `${def.name} (${def.hp} HP)`,
-          aiScore: def.hp + def.attacks.length * 5,
+          aiScore: pokemonBattleScore(this, makePokemonInPlay(card, 0), p, true),
           apply: () => place(card),
         };
       })
@@ -532,7 +558,7 @@ export class Game {
     oldActive.burned = false;
     oldActive.guard = null;
     oldActive.locks = {};
-    oldActive.attackBonus = 0;
+    oldActive.attackBoost = null;
     player.bench[benchIndex] = oldActive;
     player.active = newActive;
   }
@@ -583,19 +609,24 @@ export class Game {
   }
 
   private trainerCanPlay(def: TrainerCardDef): boolean {
-    const first = def.effects[0];
-    if (!first) return false;
-    return effectCanApply(first, this.makeContext(this.current));
+    if (def.effects.length === 0) return false;
+    const context = this.makeContext(this.current);
+    return def.effects.every((effect) => effectCanApply(effect, context));
   }
 
-  private powerHasValidUse(effects: Effect[]): boolean {
-    const first = effects[0];
-    if (!first) return false;
-    return effectCanApply(first, this.makeContext(this.current));
+  private powerHasValidUse(effects: Effect[], sourceRef: SlotRef): boolean {
+    if (effects.length === 0) return false;
+    const context = this.makeContext(this.current, undefined, false, sourceRef);
+    return effects.every((effect) => effectCanApply(effect, context));
   }
 
   getEffectAiValue(effect: Effect, controller: number): number {
     return effectAiValue(effect, this.makeContext(controller));
+  }
+
+  getEffectsAiValue(effects: Effect[], controller: number, sourceRef?: SlotRef): number {
+    const context = this.makeContext(controller, undefined, false, sourceRef);
+    return effects.reduce((total, effect) => total + effectAiValue(effect, context), 0);
   }
 
   private locked(pokemon: PokemonInPlay, what: "attack" | "retreat"): boolean {
@@ -609,7 +640,8 @@ export class Game {
     controller: number,
     attackerTypes?: EnergyType[],
     fromAttack?: boolean,
-    sourceRef?: SlotRef
+    sourceRef?: SlotRef,
+    attackDamage?: AttackDamageTotal
   ): EffectContext {
     const game = this;
     return {
@@ -643,20 +675,27 @@ export class Game {
       swapActive: (p, i) => game.swapActive(p, i),
       evolvePokemon: (pokemon, card) => game.evolvePokemon(pokemon, card),
       takeFromHand: (player, uid) => game.takeFromHand(player, uid),
-      dealDamage: (ref, amount, applyWROverride, ignoreResistance) =>
+      dealDamage: (ref, amount, applyWROverride, ignoreResistance, ignoreDefenderEffects) =>
         game.dealAttackDamage(
           ref,
           amount,
           { controller, attackerTypes, fromAttack },
           applyWROverride,
-          ignoreResistance
+          ignoreResistance,
+          ignoreDefenderEffects
         ),
+      addAttackDamage: (amount, ignoreResistance) => {
+        if (!attackDamage) return false;
+        attackDamage.amount += amount;
+        if (ignoreResistance) attackDamage.ignoreResistance = true;
+        return true;
+      },
       log: (msg, cat, extra) => game.addLog(msg, cat, extra),
       flip: (label) => game.flipCoin(label),
       requestChoice: (player, prompt, options) => game.requestChoice(player, prompt, options),
       queueSwitchChoice: (p) => game.queueSwitchChoice(p),
       queueEffects: (effects) =>
-        game.queueEffectsFor(effects, controller, attackerTypes, fromAttack, sourceRef),
+        game.queueEffectsFor(effects, controller, attackerTypes, fromAttack, sourceRef, attackDamage),
       queueThunk: (fn) => game.thunks.unshift(fn),
     };
   }
@@ -666,10 +705,23 @@ export class Game {
     controller: number,
     attackerTypes?: EnergyType[],
     fromAttack?: boolean,
-    sourceRef?: SlotRef
+    sourceRef?: SlotRef,
+    attackDamage?: AttackDamageTotal
   ): void {
-    const ctx = this.makeContext(controller, attackerTypes, fromAttack, sourceRef);
-    const thunks = effects.map((effect) => () => runEffect(effect, ctx));
+    const ctx = this.makeContext(controller, attackerTypes, fromAttack, sourceRef, attackDamage);
+    const thunks = effects.map((effect) => () => {
+      const defender = this.players[1 - controller].active;
+      if (
+        fromAttack &&
+        defender?.guard?.mode === "preventAll" &&
+        this.turnNumber <= defender.guard.untilTurn &&
+        isEffectDoneToDefendingPokemon(effect)
+      ) {
+        this.addLog(`${defender.def.name} prevented an effect of the attack`);
+        return;
+      }
+      runEffect(effect, ctx);
+    });
     this.thunks.unshift(...thunks);
   }
 
@@ -731,7 +783,8 @@ export class Game {
     base: number,
     context: { controller: number; attackerTypes?: EnergyType[]; fromAttack?: boolean },
     applyWROverride?: boolean,
-    ignoreResistance?: boolean
+    ignoreResistance?: boolean,
+    ignoreDefenderEffects?: boolean
   ): void {
     const target = this.getPokemon(ref);
     if (!target) return;
@@ -762,7 +815,7 @@ export class Game {
         this.addLog("Resistance: -30 damage");
       }
     }
-    if (context.fromAttack && amount > 0) {
+    if (context.fromAttack && amount > 0 && !ignoreDefenderEffects) {
       if (target.guard && this.turnNumber <= target.guard.untilTurn) {
         if (target.guard.mode === "preventAll") {
           amount = 0;
@@ -812,24 +865,33 @@ export class Game {
       player: this.current,
       uid: active.card.uid,
     });
-    const baseDamage = (attack.damage ?? 0) + active.attackBonus;
-    active.attackBonus = 0;
-    if (baseDamage > 0) {
-      const ignoreResistance = attack.ignoreResistance;
-      this.thunks.push(() =>
+    const boost = active.attackBoost;
+    const bonus =
+      boost &&
+      boost.usableTurn === this.turnNumber &&
+      (!boost.attackName || boost.attackName === attack.name)
+        ? boost.amount
+        : 0;
+    const attackDamage: AttackDamageTotal = {
+      amount: (attack.damage ?? 0) + bonus,
+      ignoreResistance: attack.ignoreResistance ?? false,
+    };
+    active.attackBoost = null;
+    this.thunks.push(() => {
+      if (attackDamage.amount > 0) {
         this.dealAttackDamage(
           { p: 1 - this.current, slot: "active" },
-          baseDamage,
+          attackDamage.amount,
           { controller: this.current, attackerTypes: active.def.types, fromAttack: true },
           undefined,
-          ignoreResistance
-        )
-      );
-    }
+          attackDamage.ignoreResistance
+        );
+      }
+    });
     this.queueEffectsFor(attack.effects ?? [], this.current, active.def.types, true, {
       p: this.current,
       slot: "active",
-    });
+    }, attackDamage);
   }
 
   // ── Switch choice helper ─────────────────────────────────────────────────
@@ -852,7 +914,7 @@ export class Game {
         "Switch to which Pokemon?",
         player.bench.map((pokemon, i) => ({
           label: pokemon.def.name,
-          aiScore: pokemon.def.hp - pokemon.damage,
+          aiScore: pokemonBattleScore(this, pokemon, p, true),
           apply: () => {
             this.swapActive(p, i);
             this.addLog(`${player.name} switches to ${pokemon.def.name}`, "switch", {
@@ -971,7 +1033,7 @@ export class Game {
         "Promote which Pokemon to Active?",
         player.bench.map((pokemon, i) => ({
           label: `${pokemon.def.name} (${pokemon.def.hp - pokemon.damage} HP left)`,
-          aiScore: pokemon.def.hp - pokemon.damage + pokemon.energy.length * 15,
+          aiScore: pokemonBattleScore(this, pokemon, p, true),
           apply: () => {
             const promoted = player.bench.splice(i, 1)[0];
             player.active = promoted;
@@ -1033,10 +1095,14 @@ export class Game {
       }
       if (active.burned) {
         if (!this.flipCoin(`Burn check for ${active.def.name}`)) {
-          active.damage += 20;
-          this.addLog(`${active.def.name} takes 20 burn damage`, "damage", {
+          const burnDamage = Math.max(
+            20,
+            modifierMax(this.players, { p, slot: "active" }, this.stadium, "burnDamage")
+          );
+          active.damage += burnDamage;
+          this.addLog(`${active.def.name} takes ${burnDamage} burn damage`, "damage", {
             uid: active.card.uid,
-            amount: 20,
+            amount: burnDamage,
           });
         }
       }

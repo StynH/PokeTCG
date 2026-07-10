@@ -47,8 +47,10 @@ export interface EffectContext {
     ref: SlotRef,
     amount: number,
     applyWROverride?: boolean,
-    ignoreResistance?: boolean
+    ignoreResistance?: boolean,
+    ignoreDefenderEffects?: boolean
   ): void;
+  addAttackDamage(amount: number, ignoreResistance?: boolean): boolean;
 
   log(
     msg: string,

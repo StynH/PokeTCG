@@ -98,7 +98,7 @@ Field notes:
 }
 ```
 
-`kind` options: `Item` (unlimited per turn), `Supporter` (one per turn), `Stadium` (stays in play, replaces the previous Stadium, can't play one with the same name as the current), `Tool` (attaches to a Pokemon, one per Pokemon, discarded with it). A trainer is only playable when its first effect can do something (e.g. Potion needs a damaged Pokemon).
+`kind` options: `Item` (unlimited per turn), `Supporter` (one per turn), `Stadium` (stays in play, replaces the previous Stadium, can't play one with the same name as the current), `Tool` (attaches to a Pokemon, one per Pokemon, discarded with it). A trainer is only playable when all of its effects can be resolved (e.g. Potion needs a damaged Pokemon).
 
 Optional `restriction`: `maxHandSize` (unplayable while your hand is larger, counting the card itself) and `behindOnPrizes: true` (only while you have more prizes left than the opponent).
 
@@ -135,6 +135,8 @@ Example Tool and Stadium (both in the default decks):
 { "id": "sky-terrace", "supertype": "Trainer", "kind": "Stadium",
   "modifiers": [{ "kind": "retreatDelta", "amount": -1, "scope": "allPokemon" }] }
 ```
+
+`burnDamage` modifiers override Burn damage with the highest applicable `amount`. Set `sourceRequiresActive: true` when the Body only works from the Active Spot, and use `scope: "allPokemon"` for effects such as Hot Soul.
 
 ## Energy
 
@@ -176,10 +178,10 @@ Effects run in order. Ops that need a decision (targets, searches, discards) pau
 
 | op | fields | meaning |
 |----|--------|---------|
-| `damage` | `amount`, `target`, `applyWR?`, `ignoreResistance?` | Attack damage; weakness/resistance applied when hitting the Defending Pokemon (set `applyWR` to force it on/off, e.g. for bench snipes; `ignoreResistance` keeps Weakness but skips Resistance) |
+| `damage` | `amount`, `target`, `applyWR?`, `ignoreResistance?`, `ignoreDefenderEffects?` | Attack damage; weakness/resistance applied when hitting the Defending Pokemon (set `applyWR` to force it on/off; `ignoreResistance` keeps Weakness but skips Resistance; `ignoreDefenderEffects` bypasses effects on the target) |
 | `damageScaled` | `base`, `amount`, `per`, `energyType?` | Damage to the Defending Pokemon: `base` + `amount` × count of `attackerEnergy` / `defenderEnergy` / `defenderDamageCounters` / `yourBench` / `oppBench` (with `energyType`, the energy counts only cards providing that type) |
 | `recoil` | `amount` | Damage to the attacker itself, no weakness/resistance |
-| `protectNextTurn` | `mode`, `amount?` | `preventAll` or `reduce` damage to the attacker during the opponent's next turn (Agility/Harden) |
+| `protectNextTurn` | `mode`, `amount?` | `preventAll` prevents effects and damage done to the source Pokemon; `reduce` reduces damage during the opponent's next turn |
 | `lockDefending` | `what` | Defending Pokemon can't `attack` or `retreat` during its owner's next turn; benching or evolving clears it |
 | `discardOpponentEnergy` | `count` | Controller picks energy cards to discard from the Defending Pokemon |
 | `shuffleHandDraw` | `who`, `count` | `who`: `self`/`opponent`/`both` shuffle hand into deck and draw; `count`: number, `"opponentHand"` (Copycat) or `"ownPrizes"` (Rocket's Admin.) |
@@ -192,8 +194,8 @@ Effects run in order. Ops that need a decision (targets, searches, discards) pau
 | `heal` | `amount`, `target` | Remove damage |
 | `draw` | `count` | Controller draws |
 | `drawPerOpponentPokemon` | — | Draw one per opposing Pokemon in play (Steven's Advice) |
-| `discardFromHand` | `count` | Controller chooses cards from hand to discard |
-| `discardSelfEnergy` | `count`, `energyType?` | Discard energy from the attacking Pokemon (`count: "all"` discards every attached energy) |
+| `discardFromHand` | `count`, `energyType?` | Controller chooses cards from hand to discard; `energyType` restricts the payable cost |
+| `discardSelfEnergy` | `count`, `energyType?` | Discard energy from the Pokemon that owns the effect (`count: "all"` discards every attached energy) |
 | `applyCondition` | `condition`, `target: "defending"` | `asleep`, `confused`, or `paralyzed` (they replace each other) |
 | `applyPoison` | `target: "defending"` | Poison (stacks with the above) |
 | `applyBurn` | `target: "defending"` | Burn (stacks) |
@@ -206,6 +208,8 @@ Effects run in order. Ops that need a decision (targets, searches, discards) pau
 | `attachEnergyFromHand` | `energyType?`, `target` | Extra attachment from hand (Water Call); omit `energyType` to attach any basic Energy. `target` is `anySelfChoice` or `self` |
 | `attachEnergyFromDeck` | `energyType`, `basicOnly?`, `targetType?` | Search your deck for an Energy card providing `energyType` and attach it to one of your Pokemon (`targetType` limits targets to Pokemon of that type), then shuffle |
 | `rareCandy` | — | Evolve a Basic into a matching Stage 2 from hand, skipping Stage 1 |
+
+`nextAttackBonus` accepts `amount` and an optional `attackName`. The bonus is available only during the controller's next turn and, when named, only for that attack.
 
 ### Targets
 

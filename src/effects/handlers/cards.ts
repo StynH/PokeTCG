@@ -3,6 +3,7 @@ import type { CardFilter } from "../../model/effects";
 import type { ChoiceOption } from "../../core/choice";
 import type { EffectContext } from "../context";
 import { defineEffect } from "../registry";
+import { searchCardChoiceScore } from "../../ai/choiceScoring";
 
 defineEffect<{ op: "draw"; count: number }>({
   op: "draw",
@@ -18,29 +19,39 @@ defineEffect<{ op: "drawPerOpponentPokemon" }>({
   aiValue: (_e, ctx) => (ctx.players[ctx.controller].hand.length <= 4 ? 72 : 44),
 });
 
-function discardFromHandLoop(ctx: EffectContext, count: number): void {
+function discardFromHandLoop(
+  ctx: EffectContext,
+  count: number,
+  energyType?: import("../../model/energy").EnergyType
+): void {
   if (count <= 0) return;
   const player = ctx.players[ctx.controller];
-  if (player.hand.length === 0) return;
+  const candidates = player.hand.filter(
+    (card) => !energyType || (isEnergy(card.def) && card.def.provides.includes(energyType))
+  );
+  if (candidates.length === 0) return;
   ctx.requestChoice(
     ctx.controller,
     "Discard which card?",
-    player.hand.map((card) => ({
+    candidates.map((card) => ({
       label: card.def.name,
       aiScore: isEnergy(card.def) ? 5 : isTrainer(card.def) ? 2 : 0,
       apply: () => {
         const index = player.hand.findIndex((c) => c.uid === card.uid);
         if (index !== -1) player.discard.push(player.hand.splice(index, 1)[0]);
         ctx.log(`${player.name} discards ${card.def.name}`);
-        ctx.queueThunk(() => discardFromHandLoop(ctx, count - 1));
+        ctx.queueThunk(() => discardFromHandLoop(ctx, count - 1, energyType));
       },
     }))
   );
 }
 
-defineEffect<{ op: "discardFromHand"; count: number }>({
+defineEffect<{ op: "discardFromHand"; count: number; energyType?: import("../../model/energy").EnergyType }>({
   op: "discardFromHand",
-  run: (e, ctx) => discardFromHandLoop(ctx, e.count),
+  run: (e, ctx) => discardFromHandLoop(ctx, e.count, e.energyType),
+  canApply: (e, ctx) => ctx.players[ctx.controller].hand.filter(
+    (card) => !e.energyType || (isEnergy(card.def) && card.def.provides.includes(e.energyType))
+  ).length >= e.count,
   aiValue: (e) => -e.count * 8,
 });
 
@@ -148,7 +159,7 @@ function searchDeckLoop(
     const def = card.def;
     options.push({
       label: def.name,
-      aiScore: 10,
+      aiScore: searchCardChoiceScore(ctx, card, ctx.controller),
       apply: () => {
         const index = player.deck.findIndex((c) => c.def.id === def.id);
         if (index !== -1) player.hand.push(player.deck.splice(index, 1)[0]);
@@ -204,7 +215,7 @@ defineEffect<{ op: "peekTopDeck"; count: number; filter?: CardFilter }>({
     }
     const options: ChoiceOption[] = eligible.map((card) => ({
       label: card.def.name,
-      aiScore: isEnergy(card.def) ? 8 : 12,
+      aiScore: searchCardChoiceScore(ctx, card, ctx.controller),
       apply: () => {
         const index = player.deck.findIndex((c) => c.uid === card.uid);
         if (index !== -1) player.hand.push(player.deck.splice(index, 1)[0]);

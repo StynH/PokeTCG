@@ -5,6 +5,11 @@ import type { SlotRef } from "../../core/state";
 import type { ChoiceOption } from "../../core/choice";
 import type { EffectContext } from "../context";
 import { defineEffect } from "../registry";
+import {
+  energyAttachmentChoiceScore,
+  energyMoveValue,
+  energyRemovalChoiceScore,
+} from "../../ai/choiceScoring";
 
 function moveEnergyLoop(
   ctx: EffectContext,
@@ -23,32 +28,41 @@ function moveEnergyLoop(
   ctx.requestChoice(
     p,
     "Move Energy from which Pokemon?",
-    sources.map(({ ref, pokemon }) => ({
-      label: ctx.describeSlot(ref),
-      aiScore: pokemon.def.stage === "Basic" ? 5 : 0,
-      apply: () => {
-        ctx.queueThunk(() => {
-          const targets = ctx.allInPlay(p).filter((entry) => entry.pokemon !== pokemon);
-          if (targets.length === 0) return;
-          ctx.requestChoice(
-            p,
-            "Move Energy to which Pokemon?",
-            targets.map((entry) => ({
-              label: ctx.describeSlot(entry.ref),
-              aiScore: entry.pokemon.def.hp - entry.pokemon.damage,
-              apply: () => {
-                const index = pokemon.energy.findIndex(matches);
-                if (index === -1) return;
-                const card = pokemon.energy.splice(index, 1)[0];
-                entry.pokemon.energy.push(card);
-                ctx.log(`${card.def.name} moves from ${pokemon.def.name} to ${entry.pokemon.def.name}`);
-                ctx.queueThunk(() => moveEnergyLoop(ctx, energyType, count - 1, basicOnly));
-              },
-            }))
-          );
-        });
-      },
-    }))
+    sources.map(({ ref, pokemon }) => {
+      const card = pokemon.energy.find(matches)!;
+      return {
+        label: ctx.describeSlot(ref),
+        aiScore: energyRemovalChoiceScore(ctx, pokemon, p, card, ref.slot === "active"),
+        apply: () => {
+          ctx.queueThunk(() => {
+            const targets = ctx.allInPlay(p).filter((entry) => entry.pokemon !== pokemon);
+            if (targets.length === 0) return;
+            ctx.requestChoice(
+              p,
+              "Move Energy to which Pokemon?",
+              targets.map((entry) => ({
+                label: ctx.describeSlot(entry.ref),
+                aiScore: energyAttachmentChoiceScore(
+                  ctx,
+                  card,
+                  entry.pokemon,
+                  p,
+                  entry.ref.slot === "active"
+                ),
+                apply: () => {
+                  const index = pokemon.energy.findIndex(matches);
+                  if (index === -1) return;
+                  const moved = pokemon.energy.splice(index, 1)[0];
+                  entry.pokemon.energy.push(moved);
+                  ctx.log(`${moved.def.name} moves from ${pokemon.def.name} to ${entry.pokemon.def.name}`);
+                  ctx.queueThunk(() => moveEnergyLoop(ctx, energyType, count - 1, basicOnly));
+                },
+              }))
+            );
+          });
+        },
+      };
+    })
   );
 }
 
@@ -61,26 +75,40 @@ defineEffect<{ op: "moveEnergy"; count: number; energyType?: EnergyType; basicOn
         (c) => isEnergy(c.def) && (!e.energyType || c.def.provides.includes(e.energyType)) && (!e.basicOnly || c.def.isBasic)
       )
     ),
-  aiValue: () => 20,
+  aiValue: (e, ctx) => energyMoveValue(
+    ctx,
+    ctx.controller,
+    (card) => isEnergy(card.def) &&
+      (!e.energyType || card.def.provides.includes(e.energyType)) &&
+      (!e.basicOnly || card.def.isBasic)
+  ),
 });
 
 defineEffect<{ op: "discardSelfEnergy"; count: number | "all"; energyType?: EnergyType }>({
   op: "discardSelfEnergy",
   run: (e, ctx) => {
-    const active = ctx.players[ctx.controller].active;
-    if (!active) return;
-    const limit = e.count === "all" ? active.energy.length : e.count;
+    const source = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : ctx.players[ctx.controller].active;
+    if (!source) return;
+    const limit = e.count === "all" ? source.energy.length : e.count;
     for (let i = 0; i < limit; i++) {
       const index = e.energyType
-        ? active.energy.findIndex(
+        ? source.energy.findIndex(
             (en) => isEnergy(en.def) && en.def.provides.includes(e.energyType!)
           )
-        : active.energy.length - 1;
-      if (index === -1 || active.energy.length === 0) break;
-      const removed = active.energy.splice(index, 1)[0];
+        : source.energy.length - 1;
+      if (index === -1 || source.energy.length === 0) break;
+      const removed = source.energy.splice(index, 1)[0];
       ctx.players[ctx.controller].discard.push(removed);
-      ctx.log(`${active.def.name} discards ${removed.def.name}`);
+      ctx.log(`${source.def.name} discards ${removed.def.name}`);
     }
+  },
+  canApply: (e, ctx) => {
+    const source = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : ctx.players[ctx.controller].active;
+    if (!source) return false;
+    const payable = source.energy.filter(
+      (card) => isEnergy(card.def) && (!e.energyType || card.def.provides.includes(e.energyType))
+    ).length;
+    return e.count === "all" ? payable > 0 : payable >= e.count;
   },
   aiValue: (e) => (e.count === "all" ? -24 : -e.count * 8),
 });
@@ -165,9 +193,10 @@ defineEffect<{
         ? me.bench.map((pokemon, i) => ({ ref: { p: ctx.controller, slot: i } as SlotRef, pokemon }))
         : ctx.allInPlay(ctx.controller);
     if (candidates.length === 0) return;
+    const energy = me.discard[energyIndex];
     const options: ChoiceOption[] = candidates.map(({ ref, pokemon }) => ({
       label: ctx.describeSlot(ref),
-      aiScore: (pokemon.def.stage === "Basic" ? 0 : 10) + pokemon.def.attacks.length,
+      aiScore: energyAttachmentChoiceScore(ctx, energy, pokemon, ctx.controller, ref.slot === "active"),
       apply: () => {
         const card = me.discard.splice(
           me.discard.findIndex((c) => isEnergy(c.def) && c.def.provides.includes(e.energyType)),
@@ -210,11 +239,14 @@ defineEffect<{ op: "attachEnergyFromDeck"; energyType: EnergyType; basicOnly?: b
     ctx.requestChoice(
       ctx.controller,
       `Attach ${e.energyType} Energy to which Pokemon?`,
-      candidates.map(({ ref, pokemon }) => ({
-        label: ctx.describeSlot(ref),
-        aiScore: (pokemon.def.stage === "Basic" ? 0 : 10) + pokemon.def.attacks.length,
-        apply: () => attach(pokemon),
-      }))
+      candidates.map(({ ref, pokemon }) => {
+        const energy = me.deck.find(matches)!;
+        return {
+          label: ctx.describeSlot(ref),
+          aiScore: energyAttachmentChoiceScore(ctx, energy, pokemon, ctx.controller, ref.slot === "active"),
+          apply: () => attach(pokemon),
+        };
+      })
     );
   },
   canApply: (e, ctx) =>
@@ -249,9 +281,10 @@ defineEffect<{ op: "attachEnergyFromHand"; energyType?: EnergyType; target: "any
       ctx.log(`${card.def.name} attached to ${pokemon.def.name} from hand`);
     };
     if (candidates.length === 1) { attach(candidates[0].pokemon); return; }
+    const energy = me.hand.find(matches)!;
     const options: ChoiceOption[] = candidates.map(({ ref, pokemon }) => ({
       label: ctx.describeSlot(ref),
-      aiScore: (pokemon.def.stage === "Basic" ? 0 : 10) + pokemon.def.attacks.length,
+      aiScore: energyAttachmentChoiceScore(ctx, energy, pokemon, ctx.controller, ref.slot === "active"),
       apply: () => attach(pokemon),
     }));
     ctx.requestChoice(ctx.controller, `Attach ${label} to which Pokemon?`, options);

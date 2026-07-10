@@ -3,6 +3,7 @@ import type { EnergyCardDef, PokemonCardDef } from "../../model/cards";
 import type { Effect } from "../../model/effects";
 import type { ChoiceOption, EffectContext } from "../context";
 import { defineEffect } from "../registry";
+import { pokemonBattleScore } from "../../ai/choiceScoring";
 
 defineEffect<{ op: "switchSelf"; optional?: boolean }>({
   op: "switchSelf",
@@ -11,7 +12,7 @@ defineEffect<{ op: "switchSelf"; optional?: boolean }>({
     if (me.bench.length === 0 || !me.active) return;
     const options: ChoiceOption[] = me.bench.map((pokemon, i) => ({
       label: pokemon.def.name,
-      aiScore: pokemon.def.hp - pokemon.damage,
+      aiScore: pokemonBattleScore(ctx, pokemon, ctx.controller, true),
       apply: () => {
         ctx.swapActive(ctx.controller, i);
         ctx.log(`${me.name} switches to ${pokemon.def.name}`, "switch", {
@@ -20,12 +21,27 @@ defineEffect<{ op: "switchSelf"; optional?: boolean }>({
         });
       },
     }));
-    if (e.optional) options.push({ label: "Don't switch", aiScore: 2, apply: () => {} });
+    if (e.optional) {
+      options.push({
+        label: "Don't switch",
+        aiScore: pokemonBattleScore(ctx, me.active, ctx.controller, true) + 12,
+        apply: () => {},
+      });
+    }
     ctx.requestChoice(ctx.controller, "Switch to which Pokemon?", options);
   },
   canApply: (_e, ctx) =>
     ctx.players[ctx.controller].bench.length > 0 && ctx.players[ctx.controller].active !== null,
-  aiValue: () => 4,
+  aiValue: (_e, ctx) => {
+    const me = ctx.players[ctx.controller];
+    if (!me.active || me.bench.length === 0) return -40;
+    const current = pokemonBattleScore(ctx, me.active, ctx.controller, true);
+    const bestBench = Math.max(
+      ...me.bench.map((pokemon) => pokemonBattleScore(ctx, pokemon, ctx.controller, true))
+    );
+    const improvement = bestBench - current;
+    return improvement > 10 ? 24 + improvement * 0.35 : -18;
+  },
 });
 
 defineEffect<{ op: "gustOpponent" }>({

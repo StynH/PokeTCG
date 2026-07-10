@@ -20,6 +20,13 @@ import {
 } from "./ai/profiles";
 import { render, resetEventFeed, setRerender, setStepHandler, uiState } from "./ui/render";
 import { loadCustomDecks, openDeckEditor } from "./ui/deckEditor";
+import {
+  type GameStats,
+  type MatchOutcome,
+  type TournamentCtx,
+  collectGameStats,
+  openTournamentSetup,
+} from "./ui/tournament";
 
 const HUMAN = 0;
 const AI = 1;
@@ -36,10 +43,28 @@ let aiPlayers = new Set<number>([AI]);
 let aiProfiles: [AIProfile, AIProfile] = [BALANCED, BALANCED];
 let aiTimer: number | null = null;
 let lastTurnSeen = 0;
-let lastConfig: { deckOne: string; deckTwo: string; mode: GameMode; profiles: [AIProfile, AIProfile] } | null = null;
+let lastConfig: {
+  deckOne: string;
+  deckTwo: string;
+  mode: GameMode;
+  profiles: [AIProfile, AIProfile];
+  names?: [string, string];
+} | null = null;
 let suddenDeathScheduled = false;
+let matchDone: ((outcome: MatchOutcome) => void) | null = null;
+let tournamentLabel: string | null = null;
+let currentPrizeCount = 6;
+let pendingGameStats: GameStats[] = [];
+let statsHarvested = false;
 
-function startGame(deckOne: string, deckTwo: string, mode: GameMode, profiles: [AIProfile, AIProfile], prizeCount = 6): void {
+function startGame(
+  deckOne: string,
+  deckTwo: string,
+  mode: GameMode,
+  profiles: [AIProfile, AIProfile],
+  prizeCount = 6,
+  namesOverride?: [string, string]
+): void {
   const lists = allDeckLists();
   const decks = [buildDeck(lists[deckOne], library), buildDeck(lists[deckTwo], library)];
   for (const [name, deck] of [[deckOne, decks[0]], [deckTwo, decks[1]]] as const) {
@@ -49,14 +74,17 @@ function startGame(deckOne: string, deckTwo: string, mode: GameMode, profiles: [
   aiPlayers = mode === "aivai" ? new Set([0, 1]) : new Set([AI]);
   aiProfiles = profiles;
   const names: [string, string] =
-    mode === "aivai"
+    namesOverride ??
+    (mode === "aivai"
       ? [`${profiles[0].name} (AI)`, `${profiles[1].name} (AI)`]
-      : ["You", `${profiles[1].name} (AI)`];
+      : ["You", `${profiles[1].name} (AI)`]);
   lastTurnSeen = 0;
   suddenDeathScheduled = false;
   uiState.paused = false;
   resetEventFeed();
-  lastConfig = { deckOne, deckTwo, mode, profiles };
+  lastConfig = { deckOne, deckTwo, mode, profiles, names: namesOverride };
+  currentPrizeCount = prizeCount;
+  statsHarvested = false;
   game = new Game(library, decks[0], decks[1], names, Date.now(), prizeCount);
   game.onChange = update;
   update();
@@ -64,17 +92,52 @@ function startGame(deckOne: string, deckTwo: string, mode: GameMode, profiles: [
 
 function update(): void {
   if (!game) return;
+  if (matchDone && game.phase === "finished" && !statsHarvested) {
+    statsHarvested = true;
+    pendingGameStats.push(collectGameStats(game));
+  }
+  const gameOverAction = matchDone
+    ? {
+        label: "Continue Tournament ➜",
+        onClick: () => {
+          const finished = game!;
+          const done = matchDone!;
+          matchDone = null;
+          tournamentLabel = null;
+          const games = pendingGameStats;
+          pendingGameStats = [];
+          done({
+            winnerSide: (finished.winner ?? 0) as 0 | 1,
+            score: [
+              currentPrizeCount - finished.players[0].prizes.length,
+              currentPrizeCount - finished.players[1].prizes.length,
+            ],
+            games,
+          });
+        },
+      }
+    : null;
   render(
     root,
     game,
     (action) => game!.perform(action),
     (index) => game!.resolvePending(index),
-    !aiPlayers.has(HUMAN)
+    !aiPlayers.has(HUMAN),
+    gameOverAction
   );
+  if (tournamentLabel && game.phase === "playing") {
+    const chip = document.createElement("div");
+    chip.className = "tourney-chip glass";
+    chip.textContent = `🏆 ${tournamentLabel}`;
+    root.appendChild(chip);
+  }
   if (game.phase === "finished" && game.suddenDeath && lastConfig && !suddenDeathScheduled) {
     suddenDeathScheduled = true;
     const config = lastConfig;
-    window.setTimeout(() => startGame(config.deckOne, config.deckTwo, config.mode, config.profiles, 1), 3000);
+    window.setTimeout(
+      () => startGame(config.deckOne, config.deckTwo, config.mode, config.profiles, 1, config.names),
+      3000
+    );
     return;
   }
   scheduleAI();
@@ -355,7 +418,22 @@ function showStartScreen(): void {
       findProfile(profileOneSelect.value),
       findProfile(profileTwoSelect.value),
     ]);
+
+  const tourneyButton = el("button", "action-btn tourney-btn", panel);
+  tourneyButton.textContent = "🏆 AI Tournament";
+  tourneyButton.onclick = () => openTournamentSetup(root, tournamentCtx);
 }
+
+const tournamentCtx: TournamentCtx = {
+  deckNames: () => Object.keys(allDeckLists()),
+  showStartScreen,
+  playMatch: (a, b, label, onDone) => {
+    matchDone = onDone;
+    tournamentLabel = label;
+    pendingGameStats = [];
+    startGame(a.deck, b.deck, "aivai", [a.profile, b.profile], 6, [a.name, b.name]);
+  },
+};
 
 setRerender(update);
 setStepHandler(stepAI);

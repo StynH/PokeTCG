@@ -759,7 +759,7 @@
         "name": "Faint Attack",
         "cost": ["Darkness", "Colorless"],
         "text": "This attack's damage isn't affected by Weakness, Resistance, Poké-Powers, Poké-Bodies, or any other effects on the Defending Pokémon.",
-        "effects": [{ "op": "damage", "amount": 30, "target": "defending", "applyWR": false }]
+        "effects": [{ "op": "damage", "amount": 30, "target": "defending", "applyWR": false, "ignoreDefenderEffects": true }]
       }
     ]
   },
@@ -920,7 +920,7 @@
       "text": "Once during your turn (before your attack), you may discard a Lightning Energy card from your hand. If you do, you may switch Electabuzz with one of your Benched Pokémon.",
       "usable": true,
       "oncePerTurn": true,
-      "effects": [{ "op": "discardFromHand", "count": 1 }, { "op": "switchSelf" }]
+      "effects": [{ "op": "discardFromHand", "count": 1, "energyType": "Lightning" }, { "op": "switchSelf", "optional": true }]
     },
     "attacks": [
       {
@@ -1001,7 +1001,7 @@
       "text": "Once during your turn (before your attack), you may discard a Water Energy card from your hand. If you do, discard 1 Energy attached to your opponent's Active Pokémon.",
       "usable": true,
       "oncePerTurn": true,
-      "effects": [{ "op": "discardFromHand", "count": 1 }, { "op": "discardOpponentEnergy", "count": 1 }]
+      "effects": [{ "op": "discardFromHand", "count": 1, "energyType": "Water" }, { "op": "discardOpponentEnergy", "count": 1 }]
     },
     "attacks": [
       {
@@ -1027,7 +1027,8 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Hot Soul",
-      "text": "As long as Blaziken is your Active Pokémon, put 3 damage counters instead of 2 on Burned Pokémon between turns."
+      "text": "As long as Blaziken is your Active Pokémon, put 3 damage counters instead of 2 on Burned Pokémon between turns.",
+      "modifiers": [{ "kind": "burnDamage", "amount": 30, "scope": "allPokemon", "sourceRequiresActive": true }]
     },
     "attacks": [
       {
@@ -1231,7 +1232,7 @@
         "name": "Focus Energy",
         "cost": ["Fighting"],
         "text": "During your next turn, Light Hitmonlee's Precise Kick attack's base damage is 80.",
-        "effects": [{ "op": "nextAttackBonus", "amount": 50 }]
+        "effects": [{ "op": "nextAttackBonus", "amount": 50, "attackName": "Precise Kick" }]
       },
       {
         "name": "Precise Kick",

@@ -26,8 +26,13 @@ export function modifiersAffecting(
   for (let p = 0; p < 2; p++) {
     for (const { ref: sourceRef, pokemon } of allInPlay(players, p)) {
       const isSelf = sourceRef.p === ref.p && sourceRef.slot === ref.slot;
-      if (pokemon.def.power?.kind === "Poke-Body")
-        collect(result, pokemon.def.power.modifiers, p, isSelf, ref.p);
+      if (pokemon.def.power?.kind === "Poke-Body") {
+        const bodyModifiers = pokemon.def.power.modifiers?.filter(
+          (modifier) => !("sourceRequiresActive" in modifier) ||
+            !modifier.sourceRequiresActive || sourceRef.slot === "active"
+        );
+        collect(result, bodyModifiers, p, isSelf, ref.p);
+      }
       if (pokemon.tool && isTrainer(pokemon.tool.def))
         collect(result, pokemon.tool.def.modifiers, p, isSelf, ref.p);
       for (const energy of pokemon.energy) {
@@ -55,6 +60,19 @@ export function modifierSum(
     if (mod.kind === kind) total += mod.amount;
   }
   return total;
+}
+
+export function modifierMax(
+  players: [PlayerState, PlayerState],
+  ref: SlotRef,
+  stadium: StadiumState | null,
+  kind: "burnDamage"
+): number {
+  let highest = 0;
+  for (const modifier of modifiersAffecting(players, ref, stadium)) {
+    if (modifier.kind === kind) highest = Math.max(highest, modifier.amount);
+  }
+  return highest;
 }
 
 export function conditionsPrevented(

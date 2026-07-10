@@ -16,7 +16,7 @@ export interface PokemonInPlay {
   powerUsedTurn: number | null;
   guard: { mode: "preventAll" | "reduce"; amount: number; untilTurn: number } | null;
   locks: { attack?: number; retreat?: number };
-  attackBonus: number;
+  attackBoost: { amount: number; attackName?: string; usableTurn: number } | null;
 }
 
 export interface PlayerState {
@@ -61,7 +61,7 @@ export function makePokemonInPlay(card: CardInstance, turn: number): PokemonInPl
     powerUsedTurn: null,
     guard: null,
     locks: {},
-    attackBonus: 0,
+    attackBoost: null,
   };
 }
 

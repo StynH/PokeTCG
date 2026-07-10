@@ -535,12 +535,18 @@ function renderDetailPanel(): HTMLElement {
   return panel;
 }
 
+export interface GameOverAction {
+  label: string;
+  onClick: () => void;
+}
+
 export function render(
   root: HTMLElement,
   game: Game,
   onAction: (action: Action) => void,
   onChoice: (index: number) => void,
-  humanControls: boolean
+  humanControls: boolean,
+  gameOverAction: GameOverAction | null = null
 ): void {
   root.innerHTML = "";
   activeGame = game;
@@ -585,7 +591,7 @@ export function render(
     root.appendChild(renderChoiceModal(game, onChoice));
   }
   if (game.phase === "finished") {
-    root.appendChild(renderGameOver(game));
+    root.appendChild(renderGameOver(game, gameOverAction));
   }
 
   if (justPlayed) playBoardFx(root);
@@ -885,7 +891,7 @@ function renderChoiceModal(game: Game, onChoice: (index: number) => void): HTMLE
   return overlay;
 }
 
-function renderGameOver(game: Game): HTMLElement {
+function renderGameOver(game: Game, gameOverAction: GameOverAction | null): HTMLElement {
   const overlay = el("div", "overlay");
   const modal = el("div", "modal glass modal-gameover");
   if (game.suddenDeath) {
@@ -895,8 +901,8 @@ function renderGameOver(game: Game): HTMLElement {
     const winnerName = game.winner !== null ? game.players[game.winner].name : "Nobody";
     modal.appendChild(el("div", "gameover-title", `${winnerName} wins!`));
     modal.appendChild(el("div", "gameover-reason", game.winReason));
-    const button = el("button", "action-btn btn-attack", "Play Again");
-    button.onclick = () => location.reload();
+    const button = el("button", "action-btn btn-attack", gameOverAction ? gameOverAction.label : "Play Again");
+    button.onclick = gameOverAction ? gameOverAction.onClick : () => location.reload();
     modal.appendChild(button);
   }
   overlay.appendChild(modal);
