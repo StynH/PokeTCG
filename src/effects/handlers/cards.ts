@@ -176,3 +176,71 @@ defineEffect<{ op: "searchDeck"; filter: CardFilter; count: number }>({
   canApply: (_e, ctx) => ctx.players[ctx.controller].deck.length > 0,
   aiValue: () => 58,
 });
+
+defineEffect<{ op: "drawToHandSize"; size: number }>({
+  op: "drawToHandSize",
+  run: (e, ctx) => {
+    const player = ctx.players[ctx.controller];
+    const need = Math.max(0, e.size - player.hand.length);
+    if (need > 0) ctx.drawCards(ctx.controller, need);
+  },
+  canApply: (e, ctx) => {
+    const p = ctx.players[ctx.controller];
+    return p.hand.length < e.size && p.deck.length > 0;
+  },
+  aiValue: (_e, ctx) => (ctx.players[ctx.controller].hand.length <= 3 ? 60 : 28),
+});
+
+defineEffect<{ op: "peekTopDeck"; count: number; filter?: CardFilter }>({
+  op: "peekTopDeck",
+  run: (e, ctx) => {
+    const player = ctx.players[ctx.controller];
+    const top = player.deck.slice(0, e.count);
+    if (top.length === 0) return;
+    const eligible = e.filter ? top.filter((c) => ctx.matchesFilter(c.def, e.filter!)) : top;
+    if (eligible.length === 0) {
+      ctx.log(`${player.name} looks at top ${top.length} card(s) — no eligible card found`);
+      return;
+    }
+    const options: ChoiceOption[] = eligible.map((card) => ({
+      label: card.def.name,
+      aiScore: isEnergy(card.def) ? 8 : 12,
+      apply: () => {
+        const index = player.deck.findIndex((c) => c.uid === card.uid);
+        if (index !== -1) player.hand.push(player.deck.splice(index, 1)[0]);
+        ctx.log(`${player.name} takes ${card.def.name} from the top of their deck`);
+      },
+    }));
+    options.push({ label: "Take nothing", aiScore: -10, apply: () => {} });
+    ctx.requestChoice(ctx.controller, "Choose a card to put into your hand:", options);
+  },
+  canApply: (_e, ctx) => ctx.players[ctx.controller].deck.length > 0,
+  aiValue: () => 45,
+});
+
+defineEffect<{ op: "energyRestoreFlips"; flips: number }>({
+  op: "energyRestoreFlips",
+  run: (e, ctx) => {
+    let heads = 0;
+    for (let i = 0; i < e.flips; i++) if (ctx.flip("Coin flip")) heads++;
+    if (heads === 0) { ctx.log("No heads — no Energy restored"); return; }
+    const player = ctx.players[ctx.controller];
+    const basicEnergies = player.discard.filter((c) => isEnergy(c.def) && c.def.isBasic);
+    const count = Math.min(heads, basicEnergies.length);
+    if (count === 0) { ctx.log("No basic Energy in discard pile"); return; }
+    let taken = 0;
+    for (const card of basicEnergies) {
+      if (taken >= count) break;
+      const idx = player.discard.findIndex((c) => c.uid === card.uid);
+      if (idx !== -1) {
+        player.hand.push(player.discard.splice(idx, 1)[0]);
+        ctx.log(`${card.def.name} recovered from discard pile`);
+        taken++;
+      }
+    }
+    ctx.log(`${player.name} recovered ${taken} basic Energy from the discard pile`);
+  },
+  canApply: (_e, ctx) =>
+    ctx.players[ctx.controller].discard.some((c) => isEnergy(c.def) && c.def.isBasic),
+  aiValue: () => 35,
+});

@@ -26,4 +26,4 @@ export type {
   CardLibrary,
 } from "./cards";
 
-export { isPokemon, isTrainer, isEnergy } from "./cards";
+export { isPokemon, isTrainer, isEnergy, resistancesOf } from "./cards";

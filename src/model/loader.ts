@@ -1,5 +1,5 @@
 import type { CardDef, CardLibrary } from "./types";
-import { isEnergy } from "./types";
+import { isEnergy, isPokemon } from "./types";
 
 export function buildLibrary(cards: CardDef[]): CardLibrary {
   const library: CardLibrary = {};
@@ -36,5 +36,7 @@ export function validateDeck(deck: CardDef[]): DeckValidation {
   for (const [name, count] of nameCounts) {
     if (count > 4) problems.push(`More than 4 copies of ${name} (${count})`);
   }
+  const goldStars = deck.filter((def) => isPokemon(def) && def.isGoldStar).length;
+  if (goldStars > 1) problems.push(`More than 1 Pokémon ★ in deck (${goldStars})`);
   return { valid: problems.length === 0, problems };
 }

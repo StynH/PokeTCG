@@ -10,5 +10,6 @@ export function matchesFilter(def: CardDef, filter: CardFilter): boolean {
   if (filter.nameContains && !def.name.includes(filter.nameContains)) return false;
   if (filter.maxHp !== undefined && (!isPokemon(def) || def.hp > filter.maxHp)) return false;
   if (filter.deltaOnly && (!isPokemon(def) || !def.isDelta)) return false;
+  if (filter.notTrainer && def.supertype === "Trainer") return false;
   return true;
 }

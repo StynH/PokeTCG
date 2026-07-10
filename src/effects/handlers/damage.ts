@@ -1,4 +1,4 @@
-import { isEnergy } from "../../model/cards";
+import { isEnergy, resistancesOf } from "../../model/cards";
 import type { CardInstance } from "../../model/cards";
 import type { EffectTarget, ScalePer, Condition } from "../../model/effects";
 import type { EnergyType } from "../../model/energy";
@@ -7,11 +7,17 @@ import type { ChoiceOption } from "../../core/choice";
 import type { EffectContext } from "../context";
 import { defineEffect } from "../registry";
 
-defineEffect<{ op: "damage"; amount: number; target: EffectTarget; applyWR?: boolean }>({
+defineEffect<{
+  op: "damage";
+  amount: number;
+  target: EffectTarget;
+  applyWR?: boolean;
+  ignoreResistance?: boolean;
+}>({
   op: "damage",
   run: (e, ctx) => {
     ctx.forEachTarget(e.target, `Deal ${e.amount} damage to`, (ref) => {
-      ctx.dealDamage(ref, e.amount, e.applyWR);
+      ctx.dealDamage(ref, e.amount, e.applyWR, e.ignoreResistance);
     });
   },
   aiValue: (e) => e.amount * 0.8,
@@ -34,16 +40,22 @@ defineEffect<{ op: "damageCounters"; count: number; target: EffectTarget }>({
   aiValue: (e) => e.count * 10 * 0.8,
 });
 
-defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer }>({
+defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType }>({
   op: "damageScaled",
   run: (e, ctx) => {
     const me = ctx.players[ctx.controller];
     const defendingRef: SlotRef = { p: ctx.opponent, slot: "active" };
     const defender = ctx.getPokemon(defendingRef);
+    const countEnergy = (energy: CardInstance[] | undefined): number =>
+      !energy
+        ? 0
+        : e.energyType
+          ? energy.filter((c) => isEnergy(c.def) && c.def.provides.includes(e.energyType!)).length
+          : energy.length;
     let count = 0;
     switch (e.per) {
-      case "attackerEnergy":         count = me.active?.energy.length ?? 0; break;
-      case "defenderEnergy":         count = defender?.energy.length ?? 0; break;
+      case "attackerEnergy":         count = countEnergy(me.active?.energy); break;
+      case "defenderEnergy":         count = countEnergy(defender?.energy); break;
       case "defenderDamageCounters": count = (defender?.damage ?? 0) / 10; break;
       case "selfDamageCounters":     count = (me.active?.damage ?? 0) / 10; break;
       case "yourBench":              count = me.bench.length; break;
@@ -70,7 +82,7 @@ defineEffect<{ op: "recoil"; amount: number }>({
   aiValue: (e) => -e.amount * 0.5,
 });
 
-defineEffect<{ op: "damagePerHeads"; flips: number; amount: number; target: EffectTarget }>({
+defineEffect<{ op: "damagePerHeads"; flips: number; amount: number; target: EffectTarget; recoilIfNoHeads?: number }>({
   op: "damagePerHeads",
   run: (e, ctx) => {
     let heads = 0;
@@ -78,6 +90,15 @@ defineEffect<{ op: "damagePerHeads"; flips: number; amount: number; target: Effe
     const total = heads * e.amount;
     if (total > 0) {
       ctx.forEachTarget(e.target, `Deal ${total} damage to`, (ref) => ctx.dealDamage(ref, total));
+    } else if (e.recoilIfNoHeads) {
+      const attacker = ctx.players[ctx.controller].active;
+      if (attacker) {
+        attacker.damage += e.recoilIfNoHeads;
+        ctx.log(`All tails — ${attacker.def.name} does ${e.recoilIfNoHeads} damage to itself`, "damage", {
+          uid: attacker.card.uid,
+          amount: e.recoilIfNoHeads,
+        });
+      }
     } else {
       ctx.log("No heads — the attack does nothing");
     }
@@ -165,7 +186,7 @@ defineEffect<{ op: "damageIfDefenderResistance"; resistanceType: EnergyType; bon
   run: (e, ctx) => {
     const defender = ctx.players[ctx.opponent].active;
     if (!defender) return;
-    if (defender.def.resistance === e.resistanceType) {
+    if (resistancesOf(defender.def).includes(e.resistanceType)) {
       defender.damage += e.bonus;
       ctx.log(`+${e.bonus} bonus damage (defender has ${e.resistanceType} Resistance)`);
     }

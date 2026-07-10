@@ -1,10 +1,13 @@
 import type { Action, Game, PendingChoice, PokemonInPlay } from "../engine/game";
 import { PRIZE_COUNT } from "../engine/game";
-import { isTrainer } from "../model/types";
+import { isTrainer, resistancesOf } from "../model/types";
 import type { AttackDef, CardInstance, EnergyType } from "../model/types";
+import type { AIProfile, StrategyWeights } from "./profiles";
+import { BALANCED } from "./profiles";
 
-const SAMPLES = 3;
+const SAMPLES = 4;
 const ROLLOUT_LIMIT = 40;
+const MAX_CANDIDATES = 14;
 const WIN_SCORE = 1e9;
 
 let simSeed = 12345;
@@ -14,21 +17,43 @@ function nextSeed(): number {
   return simSeed;
 }
 
-function expectedDamage(attack: AttackDef): number {
-  let damage = attack.damage ?? 0;
+function flipFactor(w: StrategyWeights): number {
+  return 0.3 + 0.2 * w.risk;
+}
+
+function expectedDamage(attack: AttackDef, pokemon: PokemonInPlay | undefined, w: StrategyWeights): number {
+  const flips = flipFactor(w);
+  let damage = (attack.damage ?? 0) + (pokemon?.attackBonus ?? 0);
   for (const effect of attack.effects ?? []) {
-    if (effect.op === "damagePerHeads") damage += (effect.flips * effect.amount) / 2;
+    if (effect.op === "damagePerHeads") damage += effect.flips * effect.amount * flips;
     if (effect.op === "damage") damage += effect.amount * 0.8;
     if (effect.op === "damageCounters") damage += effect.count * 10 * 0.8;
     if (effect.op === "flip") {
       for (const sub of effect.heads) {
-        if (sub.op === "damage") damage += sub.amount / 2;
-        if (sub.op === "applyCondition" || sub.op === "applyPoison" || sub.op === "applyBurn") damage += 12;
+        if (sub.op === "damage") damage += sub.amount * flips;
+        if (sub.op === "applyCondition" || sub.op === "applyPoison" || sub.op === "applyBurn")
+          damage += 24 * flips * w.disruption;
       }
     }
-    if (effect.op === "applyCondition" || effect.op === "applyPoison" || effect.op === "applyBurn") damage += 20;
+    if (effect.op === "applyCondition" || effect.op === "applyPoison" || effect.op === "applyBurn")
+      damage += 20 * w.disruption;
+    if (effect.op === "nextAttackBonus") damage += effect.amount * 0.65;
   }
   return damage;
+}
+
+function typedUnmetSymbols(game: Game, cost: EnergyType[], holder: PokemonInPlay, owner: number): number {
+  const pool = holder.energy.map((card) => game.energyUnits(card, holder, owner));
+  const remaining = pool.map((unit) => unit.count);
+  const typed = cost.filter((c) => c !== "Colorless");
+  let unmet = 0;
+  for (const type of typed) {
+    let index = pool.findIndex((unit, i) => remaining[i] > 0 && unit.provides.length === 1 && unit.provides[0] === type);
+    if (index === -1) index = pool.findIndex((unit, i) => remaining[i] > 0 && unit.provides.includes(type));
+    if (index === -1) { unmet++; continue; }
+    remaining[index]--;
+  }
+  return unmet;
 }
 
 function unmetSymbols(game: Game, cost: EnergyType[], holder: PokemonInPlay, owner: number): number {
@@ -51,36 +76,55 @@ function unmetSymbols(game: Game, cost: EnergyType[], holder: PokemonInPlay, own
   return unmet;
 }
 
-function attachEnergyScore(game: Game, card: CardInstance, target: PokemonInPlay, owner: number, active: boolean): number {
+function attachEnergyScore(game: Game, card: CardInstance, target: PokemonInPlay, owner: number, active: boolean, w: StrategyWeights): number {
   if (game.energyUnits(card, target, owner).count === 0) return 3;
   const withCard: PokemonInPlay = { ...target, energy: [...target.energy, card] };
-  let enables = false;
-  let progresses = false;
+  let enabledDamage = 0;
+  let progressedDamage = 0;
   let needsAny = false;
   for (const attack of target.def.attacks) {
     const before = unmetSymbols(game, attack.cost, target, owner);
     if (before === 0) continue;
     needsAny = true;
     const after = unmetSymbols(game, attack.cost, withCard, owner);
-    if (after === 0) enables = true;
-    if (after < before) progresses = true;
+    if (after >= before) continue;
+    const typedBefore = typedUnmetSymbols(game, attack.cost, target, owner);
+    const typedAfter = typedUnmetSymbols(game, attack.cost, withCard, owner);
+    if (typedAfter >= typedBefore && typedBefore > 0) continue;
+    const damage = expectedDamage(attack, target, w);
+    if (after === 0) enabledDamage = Math.max(enabledDamage, damage);
+    else progressedDamage = Math.max(progressedDamage, damage);
   }
-  const bonus = active ? 4 : 0;
-  if (enables) return 92 + bonus;
-  if (progresses) return 74 + bonus;
-  if (!needsAny) return 30;
-  return 32;
+  const bonus = active ? 8 : 0;
+  if (enabledDamage > 0) return 80 + Math.min(45, enabledDamage * 0.55) + bonus;
+  if (progressedDamage > 0) return 52 + Math.min(34, progressedDamage * 0.4) + bonus;
+  if (!needsAny) return 18;
+  return 14;
 }
 
-function bestAffordableDamage(game: Game, attacker: PokemonInPlay, owner: number, defender: PokemonInPlay | null): number {
+function energyProgressScore(game: Game, pokemon: PokemonInPlay, p: number, w: StrategyWeights): number {
+  let best = 0;
+  for (const attack of pokemon.def.attacks) {
+    if (attack.cost.length === 0) continue;
+    const unmet = unmetSymbols(game, attack.cost, pokemon, p);
+    if (unmet === 0) continue;
+    const paid = attack.cost.length - unmet;
+    if (paid <= 0) continue;
+    const damage = expectedDamage(attack, pokemon, w);
+    best = Math.max(best, damage * (paid / attack.cost.length) * 0.8);
+  }
+  return best;
+}
+
+function bestAffordableDamage(game: Game, attacker: PokemonInPlay, owner: number, defender: PokemonInPlay | null, w: StrategyWeights): number {
   let best = 0;
   const types = attacker.def.types;
   for (const attack of attacker.def.attacks) {
     if (!game.canPayCost(attack.cost, attacker, owner)) continue;
-    let damage = expectedDamage(attack);
+    let damage = expectedDamage(attack, attacker, w);
     if (defender && damage > 0) {
       if (defender.def.weakness && types.includes(defender.def.weakness)) damage *= 2;
-      if (defender.def.resistance && types.includes(defender.def.resistance)) damage = Math.max(0, damage - 30);
+      if (resistancesOf(defender.def).some((r) => types.includes(r))) damage = Math.max(0, damage - 30);
     }
     best = Math.max(best, damage);
   }
@@ -97,55 +141,80 @@ function conditionScore(pokemon: PokemonInPlay): number {
   return score;
 }
 
-function sideScore(game: Game, p: number): number {
+function sideScore(game: Game, p: number, w: StrategyWeights): number {
   const player = game.players[p];
   const oppActive = game.players[1 - p].active;
   let score = 0;
   for (const { ref, pokemon } of game.allInPlay(p)) {
     const hpLeft = Math.max(0, pokemon.def.hp - pokemon.damage);
-    score += 40 + hpLeft;
-    const maxCost = Math.max(0, ...pokemon.def.attacks.map((attack) => attack.cost.length));
-    score += Math.min(game.totalEnergyUnits(pokemon, p), maxCost) * 25;
-    const damage = bestAffordableDamage(game, pokemon, p, ref.slot === "active" ? oppActive : null);
-    score += damage * (ref.slot === "active" ? 1.6 : 0.5);
-    if (pokemon.def.isEx) score -= (pokemon.damage / pokemon.def.hp) * 120;
+    score += 40 + hpLeft * (0.5 + 0.5 * w.defense);
+    score += energyProgressScore(game, pokemon, p, w) * (ref.slot === "active" ? 1 : 0.7) * (0.5 + 0.5 * w.setup);
+    if (pokemon.underneath.length > 0) score += 18 * w.setup;
+    const damage = bestAffordableDamage(game, pokemon, p, ref.slot === "active" ? oppActive : null, w);
+    score += damage * (ref.slot === "active" ? 1.6 : 0.5) * (0.5 + 0.5 * w.aggression);
+    if (pokemon.def.isEx) score -= (pokemon.damage / pokemon.def.hp) * 120 * w.defense;
   }
-  score += Math.min(player.hand.length, 9) * 8;
+  score += Math.min(player.hand.length, 9) * 8 * (0.5 + 0.5 * w.setup);
   if (player.deck.length < 3) score -= (3 - player.deck.length) * 150;
   if (player.bench.length === 0) score -= 120;
   return score;
 }
 
-function evaluate(game: Game, p: number): number {
+function evaluate(game: Game, p: number, w: StrategyWeights): number {
   if (game.phase === "finished") return game.winner === p ? WIN_SCORE : -WIN_SCORE;
   const me = game.players[p];
   const opp = game.players[1 - p];
   let score = ((PRIZE_COUNT - me.prizes.length) - (PRIZE_COUNT - opp.prizes.length)) * 1200;
-  score += sideScore(game, p) - sideScore(game, 1 - p);
-  if (opp.active) score += conditionScore(opp.active);
-  if (me.active) score -= conditionScore(me.active);
-  if (me.active && opp.active) {
-    const threat = bestAffordableDamage(game, opp.active, 1 - p, me.active);
-    const hpLeft = me.active.def.hp - me.active.damage;
-    if (threat >= hpLeft) score -= me.active.def.isEx ? 700 : 400;
+  score += sideScore(game, p, w) - sideScore(game, 1 - p, w) * (0.7 + 0.3 * w.disruption);
+  if (opp.active) {
+    score += conditionScore(opp.active) * w.disruption;
+    score += (opp.active.damage / opp.active.def.hp) * 220 * w.aggression;
+    if (me.active) {
+      const punch = bestAffordableDamage(game, me.active, p, opp.active, w);
+      const oppHpLeft = Math.max(1, opp.active.def.hp - opp.active.damage);
+      if (punch >= oppHpLeft) score += (opp.active.def.isEx ? 420 : 280) * w.aggression;
+    }
+  }
+  if (me.active) {
+    score -= conditionScore(me.active) * w.defense;
+    if (opp.active) {
+      const threat = bestAffordableDamage(game, opp.active, 1 - p, me.active, w);
+      const hpLeft = me.active.def.hp - me.active.damage;
+      if (threat >= hpLeft) score -= (me.active.def.isEx ? 700 : 400) * w.defense;
+    }
   }
   return score;
 }
 
-function rolloutScore(game: Game, action: Action): number {
+function retreatRolloutScore(game: Game, w: StrategyWeights): number {
+  const me = game.players[game.current];
+  const active = me.active;
+  const opp = game.players[1 - game.current].active;
+  if (!active || !opp) return 2;
+  const hpLeft = active.def.hp - active.damage;
+  const threat = bestAffordableDamage(game, opp, 1 - game.current, active, w);
+  const doomed = threat >= hpLeft;
+  const stuck = bestAffordableDamage(game, active, game.current, opp, w) === 0;
+  if (doomed && active.def.isEx) return 50 * w.defense;
+  if (doomed) return 26 * w.defense;
+  if (stuck) return 20;
+  return 2;
+}
+
+function rolloutScore(game: Game, action: Action, w: StrategyWeights): number {
   const me = game.players[game.current];
   switch (action.type) {
     case "usePower":
       return 88;
     case "playBasic":
-      return me.bench.length < 4 ? 86 : 55;
+      return me.bench.length < 4 ? 78 + 8 * w.setup : 55;
     case "evolve":
-      return 84;
+      return 76 + 8 * w.setup;
     case "attachEnergy": {
       const target = game.getPokemon(action.target);
       const card = me.hand.find((c) => c.uid === action.handUid);
       if (!target || !card) return 0;
-      return attachEnergyScore(game, card, target, game.current, action.target.slot === "active");
+      return attachEnergyScore(game, card, target, game.current, action.target.slot === "active", w);
     }
     case "playTrainer": {
       const card = me.hand.find((c) => c.uid === action.handUid);
@@ -160,25 +229,26 @@ function rolloutScore(game: Game, action: Action): number {
       return 34;
     case "attack": {
       const attack = me.active?.def.attacks[action.index];
-      const dmg = attack ? expectedDamage(attack) : 0;
+      const dmg = attack ? expectedDamage(attack, me.active ?? undefined, w) : 0;
       const oppActive = game.players[1 - game.current].active;
       const hpLeft = oppActive ? Math.max(0, oppActive.def.hp - oppActive.damage) : 999;
       const koBonus = dmg >= hpLeft ? 120 : 0;
-      return 82 + dmg * 0.35 + koBonus;
+      return 82 + dmg * 0.35 * (0.7 + 0.3 * w.aggression) + koBonus;
     }
     case "retreat":
-      return 2;
+      return retreatRolloutScore(game, w);
     case "pass":
       return 1;
   }
 }
 
-function rolloutPolicy(game: Game): Action {
+function rolloutPolicy(game: Game, w: StrategyWeights): Action {
   const actions = game.getLegalActions();
+  const noise = 0.25 + 0.5 * w.risk;
   let best = actions[actions.length - 1];
   let bestScore = -Infinity;
   for (const action of actions) {
-    const score = rolloutScore(game, action) + Math.random() * 0.5;
+    const score = rolloutScore(game, action, w) + Math.random() * noise;
     if (score > bestScore) {
       bestScore = score;
       best = action;
@@ -187,33 +257,74 @@ function rolloutPolicy(game: Game): Action {
   return best;
 }
 
-function resolveAllPending(game: Game): void {
+function resolveAllPending(game: Game, profile: AIProfile): void {
   let guard = 0;
   while (game.pending && guard++ < 300) {
-    game.resolvePending(chooseOption(game.pending));
+    game.resolvePending(chooseOption(game.pending, profile));
   }
 }
 
-function playOutTurn(game: Game, p: number): void {
+function playOutTurn(game: Game, p: number, w: StrategyWeights, profile: AIProfile): void {
   let guard = 0;
   while (game.phase === "playing" && game.current === p && guard++ < ROLLOUT_LIMIT) {
-    resolveAllPending(game);
+    resolveAllPending(game, profile);
     if (game.phase !== "playing" || game.current !== p) break;
-    game.perform(rolloutPolicy(game));
+    game.perform(rolloutPolicy(game, w));
   }
-  resolveAllPending(game);
+  resolveAllPending(game, profile);
 }
 
-function simulateAction(game: Game, action: Action, p: number): number {
+function simulateAction(game: Game, action: Action, p: number, profile: AIProfile): number {
+  const w = profile.weights;
   const sim = game.cloneForSimulation(nextSeed());
   sim.perform(action);
-  resolveAllPending(sim);
-  playOutTurn(sim, p);
-  return evaluate(sim, p);
+  resolveAllPending(sim, profile);
+  playOutTurn(sim, p, w, profile);
+  if (sim.phase === "playing" && sim.current !== p)
+    playOutTurn(sim, sim.current, BALANCED.weights, BALANCED);
+  return evaluate(sim, p, w);
 }
 
-export function chooseAction(game: Game): Action {
-  const actions = game.getLegalActions();
+function actionKey(game: Game, action: Action): string {
+  const me = game.players[game.current];
+  const handName = (uid: number) => me.hand.find((c) => c.uid === uid)?.def.name ?? String(uid);
+  switch (action.type) {
+    case "playBasic":
+      return `basic:${handName(action.handUid)}`;
+    case "attachEnergy":
+      return `energy:${handName(action.handUid)}:${action.target.p}:${action.target.slot}`;
+    case "evolve":
+      return `evolve:${handName(action.handUid)}:${action.target.p}:${action.target.slot}`;
+    case "playTrainer":
+      return `trainer:${handName(action.handUid)}`;
+    case "playStadium":
+      return `stadium:${handName(action.handUid)}`;
+    case "playTool":
+      return `tool:${handName(action.handUid)}:${action.target.p}:${action.target.slot}`;
+    default:
+      return JSON.stringify(action);
+  }
+}
+
+function candidateActions(game: Game, w: StrategyWeights): Action[] {
+  const seen = new Set<string>();
+  const deduped: Action[] = [];
+  for (const action of game.getLegalActions()) {
+    const key = actionKey(game, action);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(action);
+  }
+  if (deduped.length <= MAX_CANDIDATES) return deduped;
+  const scored = deduped.map((action) => ({ action, score: rolloutScore(game, action, w) }));
+  scored.sort((a, b) => b.score - a.score);
+  const kept = scored.slice(0, MAX_CANDIDATES).map((s) => s.action);
+  if (!kept.some((a) => a.type === "pass")) kept.push({ type: "pass" });
+  return kept;
+}
+
+export function chooseAction(game: Game, profile: AIProfile = BALANCED): Action {
+  const actions = candidateActions(game, profile.weights);
   if (actions.length === 1) return actions[0];
   const p = game.current;
   let best = actions[actions.length - 1];
@@ -221,9 +332,9 @@ export function chooseAction(game: Game): Action {
   for (const action of actions) {
     let total = 0;
     for (let sample = 0; sample < SAMPLES; sample++) {
-      total += simulateAction(game, action, p);
+      total += simulateAction(game, action, p, profile);
     }
-    const value = total / SAMPLES + Math.random() * 2;
+    const value = total / SAMPLES + rolloutScore(game, action, profile.weights) * 1.5 + Math.random() * 2 * profile.weights.risk;
     if (value > bestValue) {
       bestValue = value;
       best = action;
@@ -232,11 +343,12 @@ export function chooseAction(game: Game): Action {
   return best;
 }
 
-export function chooseOption(pending: PendingChoice): number {
+export function chooseOption(pending: PendingChoice, profile: AIProfile = BALANCED): number {
+  const noise = 0.3 + 0.4 * profile.weights.risk;
   let best = 0;
   let bestScore = -Infinity;
   pending.options.forEach((option, i) => {
-    const score = option.aiScore + Math.random() * 0.5;
+    const score = option.aiScore + Math.random() * noise;
     if (score > bestScore) {
       bestScore = score;
       best = i;

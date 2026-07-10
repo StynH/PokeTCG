@@ -1,5 +1,5 @@
 import type { CardDef, CardInstance, EnergyCardDef, PokemonCardDef, TrainerCardDef } from "../model/cards";
-import { isEnergy, isPokemon, isTrainer } from "../model/cards";
+import { isEnergy, isPokemon, isTrainer, resistancesOf } from "../model/cards";
 import type { CardLibrary } from "../model/cards";
 import type { Effect } from "../model/effects";
 import type { EnergyType } from "../model/energy";
@@ -176,14 +176,17 @@ export class Game {
         }
       } else if (isEnergy(def)) {
         if (me.attachedEnergyTurn !== this.turnNumber) {
-          for (const { ref } of this.allInPlay(this.current))
+          for (const { ref, pokemon } of this.allInPlay(this.current)) {
+            if (def.attachRequiresEvolved && pokemon.def.stage === "Basic") continue;
+            if (def.attachExcludesEx && pokemon.def.isEx) continue;
             actions.push({ type: "attachEnergy", handUid: card.uid, target: ref });
+          }
         }
       } else if (isTrainer(def)) {
         if (def.kind === "Supporter" && me.supporterTurn === this.turnNumber) continue;
         if (!this.trainerRestrictionOk(def)) continue;
         if (def.kind === "Stadium") {
-          if (this.stadium?.card.def.name !== def.name)
+          if (this.stadium?.card.def.name !== def.name && !this.stadiumsBlockedByOpponent())
             actions.push({ type: "playStadium", handUid: card.uid });
         } else if (def.kind === "Tool") {
           for (const { ref, pokemon } of this.allInPlay(this.current))
@@ -198,6 +201,7 @@ export class Game {
       const power = pokemon.def.power;
       if (!power?.usable) continue;
       if (power.oncePerTurn && pokemon.powerUsedTurn === this.turnNumber) continue;
+      if (power.requiresActive && ref.slot !== "active") continue;
       if (pokemon.condition) continue;
       if (this.powerHasValidUse(power.effects ?? []))
         actions.push({ type: "usePower", target: ref });
@@ -268,7 +272,10 @@ export class Game {
         const power = (card.def as PokemonCardDef).power;
         if (power?.trigger === "onPlayFromHand" && power.effects) {
           this.addLog(`${power.name} triggers!`, "power", { player: this.current, uid: card.uid });
-          this.queueEffectsFor(power.effects, this.current);
+          this.queueEffectsFor(power.effects, this.current, undefined, false, {
+            p: this.current,
+            slot: me.bench.length - 1,
+          });
         }
         break;
       }
@@ -312,7 +319,13 @@ export class Game {
           player: this.current,
           uid: pokemon.card.uid,
         });
-        this.queueEffectsFor(pokemon.def.power.effects ?? [], this.current);
+        this.queueEffectsFor(
+          pokemon.def.power.effects ?? [],
+          this.current,
+          undefined,
+          false,
+          action.target
+        );
         break;
       }
       case "playStadium": {
@@ -552,6 +565,14 @@ export class Game {
     return pairs;
   }
 
+  private stadiumsBlockedByOpponent(): boolean {
+    const oppActive = this.players[1 - this.current].active;
+    return (
+      oppActive?.def.power?.kind === "Poke-Body" &&
+      !!oppActive.def.power.modifiers?.some((m) => m.kind === "blockOpponentStadium")
+    );
+  }
+
   private trainerRestrictionOk(def: TrainerCardDef): boolean {
     const restriction = def.restriction;
     if (!restriction) return true;
@@ -587,7 +608,8 @@ export class Game {
   private makeContext(
     controller: number,
     attackerTypes?: EnergyType[],
-    fromAttack?: boolean
+    fromAttack?: boolean,
+    sourceRef?: SlotRef
   ): EffectContext {
     const game = this;
     return {
@@ -595,13 +617,14 @@ export class Game {
       opponent: 1 - controller,
       attackerTypes,
       fromAttack,
+      sourceRef,
       get players(): [PlayerState, PlayerState] { return game.players; },
       get turnNumber(): number { return game.turnNumber; },
       getPokemon: (ref) => game.getPokemon(ref),
       allInPlay: (p) => game.allInPlay(p),
       describeSlot: (ref) => game.describeSlot(ref),
       forEachTarget: (target, prompt, fn) =>
-        game.forEachTarget(target, controller, prompt, fn),
+        game.forEachTarget(target, controller, prompt, fn, sourceRef),
       energyUnits: (card, holder, ownerIndex) =>
         game.energyUnits(card, holder, ownerIndex),
       conditionsPrevented: (ref) =>
@@ -620,19 +643,20 @@ export class Game {
       swapActive: (p, i) => game.swapActive(p, i),
       evolvePokemon: (pokemon, card) => game.evolvePokemon(pokemon, card),
       takeFromHand: (player, uid) => game.takeFromHand(player, uid),
-      dealDamage: (ref, amount, applyWROverride) =>
+      dealDamage: (ref, amount, applyWROverride, ignoreResistance) =>
         game.dealAttackDamage(
           ref,
           amount,
           { controller, attackerTypes, fromAttack },
-          applyWROverride
+          applyWROverride,
+          ignoreResistance
         ),
       log: (msg, cat, extra) => game.addLog(msg, cat, extra),
       flip: (label) => game.flipCoin(label),
       requestChoice: (player, prompt, options) => game.requestChoice(player, prompt, options),
       queueSwitchChoice: (p) => game.queueSwitchChoice(p),
       queueEffects: (effects) =>
-        game.queueEffectsFor(effects, controller, attackerTypes, fromAttack),
+        game.queueEffectsFor(effects, controller, attackerTypes, fromAttack, sourceRef),
       queueThunk: (fn) => game.thunks.unshift(fn),
     };
   }
@@ -641,9 +665,10 @@ export class Game {
     effects: Effect[],
     controller: number,
     attackerTypes?: EnergyType[],
-    fromAttack?: boolean
+    fromAttack?: boolean,
+    sourceRef?: SlotRef
   ): void {
-    const ctx = this.makeContext(controller, attackerTypes, fromAttack);
+    const ctx = this.makeContext(controller, attackerTypes, fromAttack, sourceRef);
     const thunks = effects.map((effect) => () => runEffect(effect, ctx));
     this.thunks.unshift(...thunks);
   }
@@ -652,14 +677,15 @@ export class Game {
     target: import("../model/effects").EffectTarget,
     controller: number,
     prompt: string,
-    handler: (ref: SlotRef) => void
+    handler: (ref: SlotRef) => void,
+    sourceRef?: SlotRef
   ): void {
     switch (target) {
       case "defending":
         handler({ p: 1 - controller, slot: "active" });
         return;
       case "self":
-        handler({ p: controller, slot: "active" });
+        handler(sourceRef ?? { p: controller, slot: "active" });
         return;
       case "eachOpponentBench":
         this.players[1 - controller].bench.forEach((_, i) =>
@@ -667,11 +693,16 @@ export class Game {
         );
         return;
       case "opponentBenchChoice":
+      case "anyOpponentChoice":
       case "selfBenchChoice":
       case "anySelfChoice": {
-        const p = target === "opponentBenchChoice" ? 1 - controller : controller;
+        const p =
+          target === "opponentBenchChoice" || target === "anyOpponentChoice"
+            ? 1 - controller
+            : controller;
+        const opposing = p !== controller;
         const candidates =
-          target === "anySelfChoice"
+          target === "anySelfChoice" || target === "anyOpponentChoice"
             ? this.allInPlay(p)
             : this.players[p].bench.map((pokemon, i) => ({
                 ref: { p, slot: i } as SlotRef,
@@ -684,7 +715,7 @@ export class Game {
           `${prompt}:`,
           candidates.map(({ ref, pokemon }) => ({
             label: this.describeSlot(ref),
-            aiScore: target === "opponentBenchChoice" ? pokemon.damage + 10 : pokemon.damage,
+            aiScore: opposing ? pokemon.damage + 10 : pokemon.damage,
             apply: () => handler(ref),
           }))
         );
@@ -699,7 +730,8 @@ export class Game {
     ref: SlotRef,
     base: number,
     context: { controller: number; attackerTypes?: EnergyType[]; fromAttack?: boolean },
-    applyWROverride?: boolean
+    applyWROverride?: boolean,
+    ignoreResistance?: boolean
   ): void {
     const target = this.getPokemon(ref);
     if (!target) return;
@@ -710,8 +742,10 @@ export class Game {
       if (attacker) {
         amount += modifierSum(this.players, attackerRef, this.stadium, "damagePlus");
         for (const energy of attacker.energy) {
-          const rider = (energy.def as EnergyCardDef).damageRider;
-          if (rider) amount += rider;
+          const eDef = energy.def as EnergyCardDef;
+          if (!eDef.damageRider) continue;
+          if (eDef.damageRiderType && !attacker.def.types?.includes(eDef.damageRiderType)) continue;
+          amount += eDef.damageRider;
         }
         amount = Math.max(0, amount);
       }
@@ -723,7 +757,7 @@ export class Game {
         amount *= 2;
         this.addLog("It's weak! Damage doubled");
       }
-      if (target.def.resistance && attackerTypes.includes(target.def.resistance)) {
+      if (!ignoreResistance && resistancesOf(target.def).some((r) => attackerTypes.includes(r))) {
         amount = Math.max(0, amount - 30);
         this.addLog("Resistance: -30 damage");
       }
@@ -781,15 +815,21 @@ export class Game {
     const baseDamage = (attack.damage ?? 0) + active.attackBonus;
     active.attackBonus = 0;
     if (baseDamage > 0) {
+      const ignoreResistance = attack.ignoreResistance;
       this.thunks.push(() =>
         this.dealAttackDamage(
           { p: 1 - this.current, slot: "active" },
           baseDamage,
-          { controller: this.current, attackerTypes: active.def.types, fromAttack: true }
+          { controller: this.current, attackerTypes: active.def.types, fromAttack: true },
+          undefined,
+          ignoreResistance
         )
       );
     }
-    this.queueEffectsFor(attack.effects ?? [], this.current, active.def.types, true);
+    this.queueEffectsFor(attack.effects ?? [], this.current, active.def.types, true, {
+      p: this.current,
+      slot: "active",
+    });
   }
 
   // ── Switch choice helper ─────────────────────────────────────────────────

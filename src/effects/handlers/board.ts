@@ -1,28 +1,27 @@
-import type { PokemonCardDef } from "../../model/cards";
+import { isEnergy } from "../../model/cards";
+import type { EnergyCardDef, PokemonCardDef } from "../../model/cards";
 import type { Effect } from "../../model/effects";
-import type { EffectContext } from "../context";
+import type { ChoiceOption, EffectContext } from "../context";
 import { defineEffect } from "../registry";
 
-defineEffect<{ op: "switchSelf" }>({
+defineEffect<{ op: "switchSelf"; optional?: boolean }>({
   op: "switchSelf",
-  run: (_e, ctx) => {
+  run: (e, ctx) => {
     const me = ctx.players[ctx.controller];
     if (me.bench.length === 0 || !me.active) return;
-    ctx.requestChoice(
-      ctx.controller,
-      "Switch to which Pokemon?",
-      me.bench.map((pokemon, i) => ({
-        label: pokemon.def.name,
-        aiScore: pokemon.def.hp - pokemon.damage,
-        apply: () => {
-          ctx.swapActive(ctx.controller, i);
-          ctx.log(`${me.name} switches to ${pokemon.def.name}`, "switch", {
-            player: ctx.controller,
-            uid: pokemon.card.uid,
-          });
-        },
-      }))
-    );
+    const options: ChoiceOption[] = me.bench.map((pokemon, i) => ({
+      label: pokemon.def.name,
+      aiScore: pokemon.def.hp - pokemon.damage,
+      apply: () => {
+        ctx.swapActive(ctx.controller, i);
+        ctx.log(`${me.name} switches to ${pokemon.def.name}`, "switch", {
+          player: ctx.controller,
+          uid: pokemon.card.uid,
+        });
+      },
+    }));
+    if (e.optional) options.push({ label: "Don't switch", aiScore: 2, apply: () => {} });
+    ctx.requestChoice(ctx.controller, "Switch to which Pokemon?", options);
   },
   canApply: (_e, ctx) =>
     ctx.players[ctx.controller].bench.length > 0 && ctx.players[ctx.controller].active !== null,
@@ -157,6 +156,14 @@ defineEffect<{ op: "devolveDefending" }>({
     target.evolvedTurn = null;
     ctx.players[ctx.opponent].hand.push(removed);
     ctx.log(`${removed.def.name} devolves into ${target.def.name}`);
+    const invalid = target.energy.filter(
+      (e) => isEnergy(e.def) && (e.def as EnergyCardDef).attachRequiresEvolved
+    );
+    for (const e of invalid) {
+      target.energy.splice(target.energy.indexOf(e), 1);
+      ctx.players[ctx.opponent].discard.push(e);
+      ctx.log(`${e.def.name} is discarded (${target.def.name} is no longer Evolved)`);
+    }
   },
   aiValue: () => 25,
 });

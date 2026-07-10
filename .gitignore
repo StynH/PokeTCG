@@ -146,3 +146,4 @@ vite.config.ts.timestamp-*
 *.local
 .DS_Store
 node_modules/.cache/
+/public

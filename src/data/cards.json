@@ -1217,91 +1217,258 @@
     ]
   },
   {
-    "id": "potion",
-    "name": "Potion",
-    "supertype": "Trainer",
-    "kind": "Item",
-    "text": "Remove 2 damage counters from one of your Pokémon.",
-    "effects": [{ "op": "heal", "amount": 20, "target": "anySelfChoice" }]
+    "id": "light-hitmonlee",
+    "name": "Light Hitmonlee",
+    "image": "/cards/light-hitmonlee.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 80,
+    "types": ["Fighting", "Colorless"],
+    "weakness": "Psychic",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Focus Energy",
+        "cost": ["Fighting"],
+        "text": "During your next turn, Light Hitmonlee's Precise Kick attack's base damage is 80.",
+        "effects": [{ "op": "nextAttackBonus", "amount": 50 }]
+      },
+      {
+        "name": "Precise Kick",
+        "cost": ["Fighting", "Colorless", "Colorless"],
+        "damage": 30,
+        "ignoreResistance": true,
+        "text": "This attack's damage is not affected by Resistance."
+      }
+    ]
   },
   {
-    "id": "switch",
-    "name": "Switch",
-    "supertype": "Trainer",
-    "kind": "Item",
-    "text": "Switch your Active Pokémon with one of your Benched Pokémon.",
-    "effects": [{ "op": "switchSelf" }]
+    "id": "lucario-ex",
+    "name": "Lucario ex",
+    "image": "/cards/lucario-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 90,
+    "types": ["Fighting"],
+    "isEx": true,
+    "weakness": "Psychic",
+    "retreatCost": 2,
+    "attacks": [
+      {
+        "name": "Precise Strike",
+        "cost": ["Fighting", "Colorless"],
+        "text": "Choose 1 of your opponent's Pokémon. This attack does 30 damage to that Pokémon. This attack's damage isn't affected by Weakness or Resistance.",
+        "effects": [{ "op": "damage", "amount": 30, "target": "anyOpponentChoice", "applyWR": false }]
+      },
+      {
+        "name": "Aura Sphere",
+        "cost": ["Fighting", "Fighting", "Colorless"],
+        "damage": 50,
+        "ignoreResistance": true,
+        "text": "This attack's damage is not affected by Resistance."
+      }
+    ]
+  },
+  {
+    "id": "lugia-ex",
+    "name": "Lugia ex",
+    "image": "/cards/lugia-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 100,
+    "types": ["Colorless"],
+    "isEx": true,
+    "weakness": "Fighting",
+    "retreatCost": 3,
+    "attacks": [
+      {
+        "name": "Hydropump",
+        "cost": ["Water", "Colorless"],
+        "text": "This attack does 20 damage times the amount of Water Energy attached to this Pokémon.",
+        "effects": [{ "op": "damageScaled", "base": 0, "amount": 20, "per": "attackerEnergy", "energyType": "Water" }]
+      },
+      {
+        "name": "Sky Attack",
+        "cost": ["Colorless", "Colorless", "Colorless", "Colorless"],
+        "text": "Flip a coin. If tails, this attack does nothing.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "damage", "amount": 100, "target": "defending", "applyWR": true }], "tails": [] }]
+      }
+    ]
+  },
+  {
+    "id": "rayquaza-ex",
+    "name": "Rayquaza ex",
+    "image": "/cards/rayquaza-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 100,
+    "types": ["Colorless"],
+    "isEx": true,
+    "weakness": "Colorless",
+    "resistance": ["Water", "Fighting"],
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Dragon Ascension",
+      "text": "Once during your turn (before your attack), you may attach a basic Energy card from your hand to Rayquaza ex. If you do, you may switch Rayquaza ex with 1 of your Benched Pokémon.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [
+        { "op": "attachEnergyFromHand", "target": "self" },
+        { "op": "switchSelf", "optional": true }
+      ]
+    },
+    "attacks": [
+      {
+        "name": "Atmospheric Burst",
+        "cost": ["Fire", "Lightning", "Colorless", "Colorless"],
+        "damage": 120,
+        "text": "Discard all Energy cards attached to Rayquaza ex.",
+        "effects": [{ "op": "discardSelfEnergy", "count": "all" }]
+      }
+    ]
+  },
+  {
+    "id": "giratina-star",
+    "name": "Giratina ★",
+    "image": "/cards/giratina-star.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 120,
+    "types": ["Psychic"],
+    "isGoldStar": true,
+    "weakness": "Darkness",
+    "resistance": "Fighting",
+    "retreatCost": 4,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Distortion World",
+      "text": "As long as Giratina ★ is your Active Pokémon, your opponent can't play any Stadium cards from his or her hand.",
+      "modifiers": [{ "kind": "blockOpponentStadium", "scope": "self" }]
+    },
+    "attacks": [
+      {
+        "name": "Shadow Force",
+        "cost": ["Psychic", "Psychic", "Darkness", "Colorless"],
+        "damage": 50,
+        "text": "Discard 2 Energy attached to Giratina ★. Prevent all damage done to Giratina ★ by attacks during your opponent's next turn.",
+        "effects": [
+          { "op": "discardSelfEnergy", "count": 2 },
+          { "op": "protectNextTurn", "mode": "preventAll" }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "zapdos-star",
+    "name": "Zapdos ★",
+    "image": "/cards/zapdos-star.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 80,
+    "types": ["Lightning"],
+    "isGoldStar": true,
+    "weakness": "Lightning",
+    "resistance": "Fighting",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Soaring Thunder",
+      "text": "Once during your turn, if Zapdos ★ is your Active Pokémon, you may search your deck for a Lightning Energy card and attach it to one of your Lightning type Pokémon. Shuffle your deck afterwards.",
+      "usable": true,
+      "oncePerTurn": true,
+      "requiresActive": true,
+      "effects": [{ "op": "attachEnergyFromDeck", "energyType": "Lightning", "basicOnly": true, "targetType": "Lightning" }]
+    },
+    "attacks": [
+      {
+        "name": "Hyper Bolt",
+        "cost": ["Lightning", "Lightning", "Colorless", "Colorless"],
+        "text": "Flip 3 coins. This attack does 30 damage times the number of heads. If all of them are tails, Zapdos ★ does 20 damage to itself.",
+        "effects": [{ "op": "damagePerHeads", "flips": 3, "amount": 30, "target": "defending", "recoilIfNoHeads": 20 }]
+      }
+    ]
   },
   {
     "id": "energy-search",
     "name": "Energy Search",
+    "image": "/cards/trainer-energy-search.jpg",
     "supertype": "Trainer",
     "kind": "Item",
-    "text": "Search your deck for a basic Energy card and put it into your hand. Shuffle your deck afterward.",
+    "text": "Search your deck for a basic Energy card, show it to your opponent, and put it into your hand. Shuffle your deck afterward.",
     "effects": [{ "op": "searchDeck", "filter": { "supertype": "Energy", "basicEnergy": true }, "count": 1 }]
   },
   {
-    "id": "rare-candy",
-    "name": "Rare Candy",
+    "id": "professor-birch",
+    "name": "Professor Birch",
+    "image": "/cards/trainer-professor-birch.jpg",
+    "supertype": "Trainer",
+    "kind": "Supporter",
+    "text": "Draw cards from your deck until you have 6 cards in your hand.",
+    "effects": [{ "op": "drawToHandSize", "size": 6 }]
+  },
+  {
+    "id": "pokenav",
+    "name": "PokéNav",
+    "image": "/cards/trainer-pokenav.jpg",
     "supertype": "Trainer",
     "kind": "Item",
-    "text": "Choose one of your Basic Pokémon in play. Put a Stage 2 card from your hand that evolves from it on that Pokémon.",
-    "effects": [{ "op": "rareCandy" }]
+    "text": "Look at the top 3 cards of your deck, and choose a Basic Pokémon, Evolution card, or Energy card. Show it to your opponent and put it into your hand. Put the 2 other cards back on top of your deck in any order.",
+    "effects": [{ "op": "peekTopDeck", "count": 3, "filter": { "notTrainer": true } }]
   },
   {
-    "id": "tv-reporter",
-    "name": "TV Reporter",
+    "id": "poke-ball",
+    "name": "Poké Ball",
+    "image": "/cards/trainer-poke-ball.jpg",
     "supertype": "Trainer",
-    "kind": "Supporter",
-    "text": "Draw 3 cards. Then discard a card from your hand.",
-    "effects": [{ "op": "draw", "count": 3 }, { "op": "discardFromHand", "count": 1 }]
+    "kind": "Item",
+    "text": "Flip a coin. If heads, search your deck for a Basic Pokémon or Evolution card, show it to your opponent and put it into your hand. Shuffle your deck afterward.",
+    "effects": [{ "op": "flip", "heads": [{ "op": "searchDeck", "filter": { "supertype": "Pokemon" }, "count": 1 }], "tails": [] }]
   },
   {
-    "id": "stevens-advice",
-    "name": "Steven's Advice",
+    "id": "energy-removal-2",
+    "name": "Energy Removal 2",
+    "image": "/cards/trainer-energy-removal-2.jpg",
     "supertype": "Trainer",
-    "kind": "Supporter",
-    "text": "Draw a card for each of your opponent's Pokémon in play.",
-    "effects": [{ "op": "drawPerOpponentPokemon" }]
+    "kind": "Item",
+    "text": "Flip a coin. If heads, choose 1 Energy card attached to 1 of your opponent's Pokémon and discard it.",
+    "effects": [{ "op": "flip", "heads": [{ "op": "discardOpponentEnergy", "count": 1, "target": "any" }], "tails": [] }]
   },
   {
-    "id": "celios-network",
-    "name": "Celio's Network",
+    "id": "energy-restore",
+    "name": "Energy Restore",
+    "image": "/cards/trainer-energy-restore.jpg",
     "supertype": "Trainer",
-    "kind": "Supporter",
-    "text": "Search your deck for a Pokémon (excluding Pokémon-ex) and put it into your hand. Shuffle your deck afterward.",
-    "effects": [{ "op": "searchDeck", "filter": { "supertype": "Pokemon", "excludeEx": true }, "count": 1 }]
+    "kind": "Item",
+    "text": "Flip 3 coins. For each heads, put a basic Energy card from your discard pile into your hand. If you don't have that many basic Energy cards in your discard pile, put all of them into your hand.",
+    "effects": [{ "op": "energyRestoreFlips", "flips": 3 }]
   },
   {
-    "id": "strength-charm",
-    "name": "Strength Charm",
+    "id": "energy-switch",
+    "name": "Energy Switch",
+    "image": "/cards/trainer-energy-switch.jpg",
     "supertype": "Trainer",
-    "kind": "Tool",
-    "text": "Attacks by the Pokémon this card is attached to do 10 more damage to the Defending Pokémon.",
-    "effects": [],
-    "modifiers": [{ "kind": "damagePlus", "amount": 10, "scope": "self" }]
-  },
-  {
-    "id": "sky-terrace",
-    "name": "Sky Terrace",
-    "supertype": "Trainer",
-    "kind": "Stadium",
-    "text": "The Retreat Cost of each Pokémon in play (both yours and your opponent's) is 1 less.",
-    "effects": [],
-    "modifiers": [{ "kind": "retreatDelta", "amount": -1, "scope": "allPokemon" }]
+    "kind": "Item",
+    "text": "Move a basic Energy card attached to 1 of your Pokémon to another of your Pokémon.",
+    "effects": [{ "op": "moveEnergy", "count": 1, "basicOnly": true }]
   },
   {
     "id": "double-rainbow-energy",
     "name": "Double Rainbow Energy",
+    "image": "/cards/doublerainbow.png",
     "supertype": "Energy",
     "provides": ["Grass", "Fire", "Water", "Lightning", "Psychic", "Fighting", "Darkness", "Metal"],
     "isBasic": false,
+    "text": "Double Rainbow Energy can be attached only to an Evolved Pokémon (excluding Pokémon-ex). While in play, Double Rainbow Energy provides every type of Energy but provides 2 Energy at a time. (Has no effect other than providing Energy.) Damage done to your opponent's Pokémon by the Pokémon Double Rainbow Energy is attached to is reduced by 10 (before applying Weakness and Resistance). When the Pokémon Double Rainbow Energy is attached to is no longer an Evolved Pokémon, discard Double Rainbow Energy.",
+    "attachRequiresEvolved": true,
+    "attachExcludesEx": true,
     "provideCount": 2,
     "damageRider": -10
   },
   {
     "id": "grass-energy",
     "name": "Grass Energy",
+    "image": "/base/grass.png",
     "supertype": "Energy",
     "provides": ["Grass"],
     "isBasic": true
@@ -1309,6 +1476,7 @@
   {
     "id": "fire-energy",
     "name": "Fire Energy",
+    "image": "/base/fire.png",
     "supertype": "Energy",
     "provides": ["Fire"],
     "isBasic": true
@@ -1316,6 +1484,7 @@
   {
     "id": "water-energy",
     "name": "Water Energy",
+    "image": "/base/water.png",
     "supertype": "Energy",
     "provides": ["Water"],
     "isBasic": true
@@ -1323,6 +1492,7 @@
   {
     "id": "lightning-energy",
     "name": "Lightning Energy",
+    "image": "/base/lightning.png",
     "supertype": "Energy",
     "provides": ["Lightning"],
     "isBasic": true
@@ -1330,6 +1500,7 @@
   {
     "id": "psychic-energy",
     "name": "Psychic Energy",
+    "image": "/base/psychic.png",
     "supertype": "Energy",
     "provides": ["Psychic"],
     "isBasic": true
@@ -1337,6 +1508,7 @@
   {
     "id": "fighting-energy",
     "name": "Fighting Energy",
+    "image": "/base/fighting.png",
     "supertype": "Energy",
     "provides": ["Fighting"],
     "isBasic": true
@@ -1344,15 +1516,22 @@
   {
     "id": "metal-energy",
     "name": "Metal Energy",
+    "image": "/cards/metal.png",
     "supertype": "Energy",
     "provides": ["Metal"],
-    "isBasic": true
+    "isBasic": false,
+    "text": "Damage done by attacks to the Pokémon that Metal Energy is attached to is reduced by 10 (after applying Weakness and Resistance). Ignore this effect if the Pokémon that Metal Energy is attached to isn't Metal. (Doesn't count as a basic Energy card.)",
+    "modifiers": [{ "kind": "damageMinus", "amount": 10, "scope": "self", "requiresHolderType": "Metal" }]
   },
   {
     "id": "darkness-energy",
     "name": "Darkness Energy",
+    "image": "/cards/darkness.png",
     "supertype": "Energy",
     "provides": ["Darkness"],
-    "isBasic": true
+    "isBasic": false,
+    "text": "If the Pokémon Darkness Energy is attached to attacks, the attack does 10 more damage to the Active Pokémon (before applying Weakness and Resistance). Ignore this effect if the Pokémon that Darkness Energy is attached to isn't Darkness. (Doesn't count as a basic Energy card.)",
+    "damageRider": 10,
+    "damageRiderType": "Darkness"
   }
 ]

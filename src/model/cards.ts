@@ -9,6 +9,7 @@ export interface AttackDef {
   name: string;
   cost: EnergyType[];
   damage?: number;
+  ignoreResistance?: boolean;
   text?: string;
   effects?: Effect[];
 }
@@ -19,6 +20,7 @@ export interface PowerDef {
   text: string;
   usable?: boolean;
   oncePerTurn?: boolean;
+  requiresActive?: boolean;
   trigger?: "onPlayFromHand";
   effects?: Effect[];
   modifiers?: Modifier[];
@@ -39,10 +41,11 @@ export interface PokemonCardDef {
   hp: number;
   types: EnergyType[];
   isEx?: boolean;
+  isGoldStar?: boolean;
   isDelta?: boolean;
   playableAsEnergy?: boolean;
   weakness?: EnergyType;
-  resistance?: EnergyType;
+  resistance?: EnergyType | EnergyType[];
   retreatCost: number;
   attacks: AttackDef[];
   power?: PowerDef;
@@ -68,7 +71,11 @@ export interface EnergyCardDef {
   provides: EnergyType[];
   isBasic: boolean;
   provideCount?: number;
+  text?: string;
+  attachRequiresEvolved?: boolean;
+  attachExcludesEx?: boolean;
   damageRider?: number;
+  damageRiderType?: EnergyType;
   scramble?: boolean;
   deltaOnly?: boolean;
   modifiers?: Modifier[];
@@ -82,6 +89,11 @@ export interface CardInstance {
 }
 
 export type CardLibrary = Record<string, CardDef>;
+
+export function resistancesOf(def: PokemonCardDef): EnergyType[] {
+  if (!def.resistance) return [];
+  return Array.isArray(def.resistance) ? def.resistance : [def.resistance];
+}
 
 export function isPokemon(def: CardDef): def is PokemonCardDef {
   return def.supertype === "Pokemon";

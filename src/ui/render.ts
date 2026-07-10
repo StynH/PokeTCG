@@ -1,5 +1,5 @@
 import type { Action, EventCat, Game, GameEvent, PokemonInPlay } from "../engine/game";
-import { isEnergy, isPokemon, isTrainer } from "../model/types";
+import { isEnergy, isPokemon, isTrainer, resistancesOf } from "../model/types";
 import type { AttackDef, CardDef, EnergyType, TrainerKind } from "../model/types";
 
 const HUMAN = 0;
@@ -136,7 +136,7 @@ const ENERGY_SPRITE_COLUMN: Record<EnergyType, number> = {
   Darkness: 9,
 };
 
-function energyIcon(type: EnergyType, sizeClass: string): HTMLElement {
+export function energyIcon(type: EnergyType, sizeClass: string): HTMLElement {
   const icon = el("span", `energy-icon ${sizeClass}`);
   icon.style.setProperty("--col", String(ENERGY_SPRITE_COLUMN[type]));
   icon.title = type;
@@ -158,6 +158,14 @@ function el(tag: string, className: string, text?: string): HTMLElement {
   return node;
 }
 
+function symbolChip(className: string, src: string, alt: string): HTMLElement {
+  const img = document.createElement("img");
+  img.className = className;
+  img.src = src;
+  img.alt = alt;
+  return img;
+}
+
 function costDots(cost: EnergyType[]): HTMLElement {
   const row = el("span", "cost-dots");
   for (const symbol of cost) {
@@ -177,13 +185,14 @@ function attackRow(attack: AttackDef): HTMLElement {
   return row;
 }
 
-function cardFace(def: CardDef, size: "xl" | "lg" | "md" | "hand"): HTMLElement {
+export function cardFace(def: CardDef, size: "xl" | "lg" | "md" | "hand"): HTMLElement {
   const card = el("div", `tcg-card card-${size}`);
   if (def.image) {
     card.classList.add("card-img");
     card.style.backgroundImage = `url(${def.image})`;
     card.title = def.name;
     if (isPokemon(def) && def.isEx) card.classList.add("tile-ex");
+    if (isPokemon(def) && def.isGoldStar) card.classList.add("tile-star");
     return card;
   }
 
@@ -193,6 +202,7 @@ function cardFace(def: CardDef, size: "xl" | "lg" | "md" | "hand"): HTMLElement 
     color = TYPE_COLORS[def.types[0] ?? "Colorless"];
     emblem = TYPE_EMBLEMS[def.types[0] ?? "Colorless"];
     if (def.isEx) card.classList.add("tile-ex");
+    if (def.isGoldStar) card.classList.add("tile-star");
   } else if (isEnergy(def)) {
     color = TYPE_COLORS[def.provides.length === 1 ? def.provides[0] : "Colorless"];
     emblem = def.provides.length === 1 ? TYPE_EMBLEMS[def.provides[0]] : "🌈";
@@ -228,7 +238,8 @@ function cardFace(def: CardDef, size: "xl" | "lg" | "md" | "hand"): HTMLElement 
   if (isPokemon(def)) {
     art.appendChild(el("span", "stage-chip", def.stage === "Basic" ? "BASIC" : def.stage.replace("Stage", "STAGE ")));
     if (def.isDelta) art.appendChild(el("span", "delta-chip", "δ"));
-    if (def.isEx) art.appendChild(el("span", "ex-chip", "ex"));
+    if (def.isEx) art.appendChild(symbolChip("ex-chip", "/symbols/ex.png", "ex"));
+    if (def.isGoldStar) art.appendChild(symbolChip("star-chip", "/symbols/shiny.png", "Gold Star"));
   }
   card.appendChild(art);
 
@@ -391,9 +402,9 @@ function detailAttack(attack: AttackDef): HTMLElement {
   return block;
 }
 
-function buildDetail(def: CardDef): HTMLElement {
+export function buildCardDetail(def: CardDef, uid: number | null = null): HTMLElement {
   const wrap = el("div", "detail-content");
-  const live = findLive(hoverUid);
+  const live = findLive(uid);
   wrap.appendChild(cardFace(def, "xl"));
 
   const info = el("div", "detail-info");
@@ -407,7 +418,18 @@ function buildDetail(def: CardDef): HTMLElement {
     meta.appendChild(el("span", "detail-tag", def.stage === "Basic" ? "Basic" : def.stage.replace("Stage", "Stage ")));
     if (def.isDelta) meta.appendChild(el("span", "detail-tag detail-tag-delta", "δ Delta Species"));
     if (def.evolvesFrom) meta.appendChild(el("span", "detail-tag", `from ${def.evolvesFrom}`));
-    if (def.isEx) meta.appendChild(el("span", "detail-tag detail-tag-ex", "Pokémon-ex"));
+    if (def.isEx) {
+      const tag = el("span", "detail-tag detail-tag-ex");
+      tag.appendChild(symbolChip("detail-tag-icon", "/symbols/ex.png", "ex"));
+      tag.appendChild(document.createTextNode("Pokémon-ex"));
+      meta.appendChild(tag);
+    }
+    if (def.isGoldStar) {
+      const tag = el("span", "detail-tag detail-tag-star");
+      tag.appendChild(symbolChip("detail-tag-icon", "/symbols/shiny.png", "Gold Star"));
+      tag.appendChild(document.createTextNode("Pokémon ★"));
+      meta.appendChild(tag);
+    }
     if (def.playableAsEnergy) meta.appendChild(el("span", "detail-tag detail-tag-delta", "Plays as Energy"));
     info.appendChild(meta);
 
@@ -415,8 +437,17 @@ function buildDetail(def: CardDef): HTMLElement {
     info.appendChild(statLine("HP", hp));
     info.appendChild(statLine("Weakness", "", def.weakness ? energyIcon(def.weakness, "icon-inline") : undefined));
     if (!def.weakness) info.lastElementChild!.querySelector(".detail-stat-value")!.textContent = "—";
-    info.appendChild(statLine("Resistance", "", def.resistance ? energyIcon(def.resistance, "icon-inline") : undefined));
-    if (!def.resistance) info.lastElementChild!.querySelector(".detail-stat-value")!.textContent = "—";
+    const resistances = resistancesOf(def);
+    const resistRow = el("div", "detail-stat");
+    resistRow.appendChild(el("span", "detail-stat-label", "Resistance"));
+    const resistVal = el("span", "detail-stat-value");
+    if (resistances.length === 0) {
+      resistVal.textContent = "—";
+    } else {
+      for (const r of resistances) resistVal.appendChild(energyIcon(r, "icon-inline"));
+    }
+    resistRow.appendChild(resistVal);
+    info.appendChild(resistRow);
     const retreat = el("span", "detail-stat-value");
     for (let i = 0; i < def.retreatCost; i++) retreat.appendChild(energyIcon("Colorless", "icon-inline"));
     if (def.retreatCost === 0) retreat.textContent = "Free";
@@ -470,13 +501,11 @@ function buildDetail(def: CardDef): HTMLElement {
     info.appendChild(provRow);
     if (def.provides.length > 1) info.lastElementChild!.querySelector(".detail-stat-label")!.textContent = "Provides (any one)";
     if ((def.provideCount ?? 1) > 1) info.appendChild(statLine("Counts as", `${def.provideCount} Energy`));
-    if (def.damageRider) info.appendChild(statLine("Damage", `${def.damageRider > 0 ? "+" : ""}${def.damageRider} dealt`));
+    if (def.text) info.appendChild(el("div", "detail-attack-text", def.text));
     if (def.deltaOnly) info.appendChild(el("div", "detail-restriction", "Provides Energy only while attached to a Delta Species (δ) Pokémon."));
     if (def.scramble) info.appendChild(el("div", "detail-restriction", "Full effect only while behind on Prizes; otherwise 1 Colorless."));
     for (const mod of def.modifiers ?? []) {
       if (mod.kind === "preventConditions") info.appendChild(el("div", "detail-restriction", "The Pokémon this is attached to can't be affected by Special Conditions."));
-      if (mod.kind === "damageMinus") info.appendChild(el("div", "detail-restriction", `Reduces damage taken by ${mod.amount}.`));
-      if (mod.kind === "damagePlus") info.appendChild(el("div", "detail-restriction", `Attacks do ${mod.amount} more damage.`));
     }
   }
 
@@ -493,7 +522,7 @@ function paintDetail(): void {
       hoverUid = active.card.uid;
     }
   }
-  if (hoverDef) detailBodyEl.replaceChildren(buildDetail(hoverDef));
+  if (hoverDef) detailBodyEl.replaceChildren(buildCardDetail(hoverDef, hoverUid));
   else detailBodyEl.replaceChildren(el("div", "detail-hint", "Hover a card to inspect it."));
 }
 
@@ -542,6 +571,7 @@ export function render(
   field.appendChild(columnMain);
   field.appendChild(railRight);
 
+  board.appendChild(renderOppHand(game, !humanControls));
   board.appendChild(field);
   board.appendChild(renderHand(game, legal, onAction));
 
@@ -653,6 +683,30 @@ function renderAnnouncer(): HTMLElement {
   chip.appendChild(el("span", "announcer-icon", CAT_ICON[headline!.cat]));
   chip.appendChild(el("span", "announcer-text", headlineText(headline!)));
   return chip;
+}
+
+function renderOppHand(game: Game, faceUp: boolean): HTMLElement {
+  const wrap = el("div", "opp-hand-wrap");
+  const fan = el("div", "opp-hand-fan");
+  const tiles: HTMLElement[] = [];
+  for (const card of game.players[AI].hand) {
+    let tile: HTMLElement;
+    if (faceUp) {
+      tile = cardFace(card.def, "hand");
+      attachHover(tile, card.def, card.uid);
+    } else {
+      tile = cardBackEl("opp-hand-card card-hand");
+    }
+    tiles.push(tile);
+    fan.appendChild(tile);
+  }
+  tiles.forEach((tile, i) => {
+    const offset = i - (tiles.length - 1) / 2;
+    tile.style.setProperty("--rot", `${offset * -3}deg`);
+    tile.style.setProperty("--lift", `${Math.abs(offset) * -7}px`);
+  });
+  wrap.appendChild(fan);
+  return wrap;
 }
 
 function renderHand(game: Game, legal: Action[], onAction: (action: Action) => void): HTMLElement {

@@ -31,8 +31,11 @@ export function modifiersAffecting(
       if (pokemon.tool && isTrainer(pokemon.tool.def))
         collect(result, pokemon.tool.def.modifiers, p, isSelf, ref.p);
       for (const energy of pokemon.energy) {
-        if (isEnergy(energy.def) && energy.def.modifiers)
-          collect(result, energy.def.modifiers, p, isSelf, ref.p);
+        if (!isEnergy(energy.def) || !energy.def.modifiers) continue;
+        const filtered = energy.def.modifiers.filter(
+          (m) => !("requiresHolderType" in m) || !m.requiresHolderType || pokemon.def.types?.includes(m.requiresHolderType)
+        );
+        collect(result, filtered, p, isSelf, ref.p);
       }
     }
   }

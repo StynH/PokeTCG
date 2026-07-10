@@ -12,6 +12,7 @@ export interface EffectContext {
   opponent: number;
   attackerTypes?: EnergyType[];
   fromAttack?: boolean;
+  sourceRef?: SlotRef;
 
   players: [PlayerState, PlayerState];
   turnNumber: number;
@@ -42,7 +43,12 @@ export interface EffectContext {
   evolvePokemon(pokemon: PokemonInPlay, card: CardInstance): void;
   takeFromHand(player: PlayerState, uid: number): CardInstance | null;
 
-  dealDamage(ref: SlotRef, amount: number, applyWROverride?: boolean): void;
+  dealDamage(
+    ref: SlotRef,
+    amount: number,
+    applyWROverride?: boolean,
+    ignoreResistance?: boolean
+  ): void;
 
   log(
     msg: string,
