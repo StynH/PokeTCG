@@ -6,6 +6,8 @@ import type { EnergyType } from "../model/energy";
 import { SeededRng, shuffle } from "../core/rng";
 import type { EventCat, GameEvent } from "../core/events";
 import type { ChoiceOption, PendingChoice } from "../core/choice";
+import type { EffectFrame, QueuedOperation, SystemOperation } from "../core/operations";
+import { effectCommand, effectOperation } from "../core/operations";
 import type { GamePhase, SlotRef, StadiumState } from "../core/state";
 import {
   type PlayerState,
@@ -18,7 +20,7 @@ import { energyUnits, canPayCost, totalEnergyUnits } from "../rules/energy";
 import { modifierMax, modifierSum, damageMinusSum, conditionsPrevented, effectiveHp, effectiveRetreatCost, weaknessNullified } from "../rules/modifiers";
 import { matchesFilter } from "../rules/filters";
 import type { EffectContext } from "../effects/context";
-import { runEffect, effectCanApply, effectAiValue } from "../effects/registry";
+import { runEffect, runEffectCommand, effectCanApply, effectAiValue } from "../effects/registry";
 import { pokemonBattleScore } from "../ai/choiceScoring";
 import "../effects/handlers/index";
 
@@ -75,6 +77,7 @@ export type Decision =
 
 export interface DecisionOption {
   id: string;
+  informationKey: string;
   label: string;
   decision: Decision;
 }
@@ -100,6 +103,14 @@ export interface GameSnapshot {
   eventSeq: number;
   rngState: number;
   revision: number;
+  pending: PendingChoice | null;
+  operations: QueuedOperation[];
+  attackTotals: Array<[number, AttackDamageTotal]>;
+  attackSeq: number;
+  choiceSeq: number;
+  turnEnding: boolean;
+  turnStarting: boolean;
+  knownOpponentHands: [Record<number, string>, Record<number, string>];
 }
 
 export interface InformationState {
@@ -129,7 +140,10 @@ export class Game {
   private eventSeq = 0;
   private choiceSeq = 0;
   private uidCounter = 1;
-  private thunks: Array<() => void> = [];
+  private operations: QueuedOperation[] = [];
+  private attackTotals = new Map<number, AttackDamageTotal>();
+  private attackSeq = 0;
+  private knownOpponentHands: [Record<number, string>, Record<number, string>] = [{}, {}];
   private turnEnding = false;
   private turnStarting = false;
   private prizeCount = PRIZE_COUNT;
@@ -163,7 +177,7 @@ export class Game {
     clone.winReason = this.winReason;
     clone.log = [];
     clone.events = [];
-    clone.pending = null;
+    clone.pending = this.pending ? this.clonePending(this.pending) : null;
     clone.onChange = () => {};
     clone.library = this.library;
     clone.rng = new SeededRng(seed);
@@ -174,7 +188,15 @@ export class Game {
     clone.eventSeq = 0;
     clone.choiceSeq = this.choiceSeq;
     clone.uidCounter = this.uidCounter;
-    clone.thunks = [];
+    clone.operations = this.operations.map((operation) => structuredClone(operation));
+    clone.attackTotals = new Map(
+      [...this.attackTotals].map(([id, total]) => [id, { ...total }])
+    );
+    clone.attackSeq = this.attackSeq;
+    clone.knownOpponentHands = [
+      { ...this.knownOpponentHands[0] },
+      { ...this.knownOpponentHands[1] },
+    ];
     clone.turnEnding = false;
     clone.turnStarting = false;
     clone.prizeCount = this.prizeCount;
@@ -186,8 +208,6 @@ export class Game {
   }
 
   toSnapshot(): GameSnapshot {
-    if (this.pending || this.thunks.length > 0)
-      throw new Error("Game snapshots require a stable decision point");
     return {
       players: [clonePlayer(this.players[0]), clonePlayer(this.players[1])],
       initialDeckIds: [[...this.initialDeckIds[0]], [...this.initialDeckIds[1]]],
@@ -203,10 +223,21 @@ export class Game {
       eventSeq: this.eventSeq,
       rngState: this.rng.snapshot(),
       revision: this.revision,
+      pending: this.pending ? this.clonePending(this.pending) : null,
+      operations: this.operations.map((operation) => structuredClone(operation)),
+      attackTotals: [...this.attackTotals].map(([id, total]) => [id, { ...total }]),
+      attackSeq: this.attackSeq,
+      choiceSeq: this.choiceSeq,
+      turnEnding: this.turnEnding,
+      turnStarting: this.turnStarting,
+      knownOpponentHands: [
+        { ...this.knownOpponentHands[0] },
+        { ...this.knownOpponentHands[1] },
+      ],
     };
   }
 
-  static fromSnapshot(snapshot: GameSnapshot, library: CardLibrary): Game {
+  static fromSnapshot(snapshot: GameSnapshot, library: CardLibrary, chanceSeed?: number): Game {
     const game: Game = Object.create(Game.prototype);
     game.players = [clonePlayer(snapshot.players[0]), clonePlayer(snapshot.players[1])];
     game.initialDeckIds = [
@@ -222,23 +253,34 @@ export class Game {
     game.winReason = snapshot.winReason;
     game.log = [];
     game.events = [];
-    game.pending = null;
+    game.pending = snapshot.pending ? game.clonePending(snapshot.pending) : null;
     game.onChange = () => {};
     game.revision = snapshot.revision;
     game.library = library;
-    game.rng = new SeededRng(snapshot.rngState);
+    game.rng = new SeededRng(chanceSeed ?? snapshot.rngState);
     game.eventSeq = snapshot.eventSeq;
-    game.choiceSeq = 0;
+    game.choiceSeq = snapshot.choiceSeq;
     game.uidCounter = snapshot.uidCounter;
-    game.thunks = [];
-    game.turnEnding = false;
-    game.turnStarting = false;
+    game.operations = snapshot.operations.map((operation) => structuredClone(operation));
+    game.attackTotals = new Map(snapshot.attackTotals.map(([id, total]) => [id, { ...total }]));
+    game.attackSeq = snapshot.attackSeq;
+    game.turnEnding = snapshot.turnEnding;
+    game.turnStarting = snapshot.turnStarting;
+    game.knownOpponentHands = [
+      { ...snapshot.knownOpponentHands[0] },
+      { ...snapshot.knownOpponentHands[1] },
+    ];
     game.prizeCount = snapshot.prizeCount;
     return game;
   }
 
   getInformationState(observer: number): InformationState {
+    if (this.pending && this.pending.player !== observer)
+      throw new Error("Information state can only be requested for the current decision actor");
     const snapshot = this.toSnapshot();
+    snapshot.knownOpponentHands = observer === 0
+      ? [{ ...snapshot.knownOpponentHands[0] }, {}]
+      : [{}, { ...snapshot.knownOpponentHands[1] }];
     for (let p = 0; p < 2; p++) {
       const placeholder = this.library[snapshot.initialDeckIds[p][0]];
       if (!placeholder) throw new Error(`Cannot redact unknown deck for player ${p}`);
@@ -265,6 +307,7 @@ export class Game {
         turn: snapshot.turnNumber,
         stadium: snapshot.stadium?.card.def.id ?? null,
         players: [visible(0), visible(1)],
+        knownOpponentHand: snapshot.knownOpponentHands[observer],
       }),
     };
   }
@@ -276,10 +319,11 @@ export class Game {
       return {
         actor: this.pending.player,
         id: choiceId,
-        options: this.pending.options.map((option, index) => {
+      options: this.pending.options.map((option, index) => {
           const optionId = option.id ?? `option:${index}`;
           return {
             id: optionId,
+            informationKey: option.informationKey ?? optionId,
             label: option.label,
             decision: { kind: "choice", choiceId, optionId },
           };
@@ -291,6 +335,7 @@ export class Game {
       id: `action:${this.revision}`,
       options: this.getLegalActions().map((action) => ({
         id: JSON.stringify(action),
+        informationKey: this.actionInformationKey(action),
         label: this.describeAction(action),
         decision: { kind: "action", action },
       })),
@@ -567,14 +612,6 @@ export class Game {
         const cost = this.effectiveRetreatCost({ p: this.current, slot: "active" }, active);
         me.retreatedTurn = this.turnNumber;
         const distinctEnergy = new Set(active.energy.map((c) => c.def.id)).size;
-        const finish = () => {
-          this.swapActive(this.current, action.benchIndex);
-          this.addLog(
-            `${me.name} retreats ${active.def.name} for ${target.def.name}`,
-            "switch",
-            { player: this.current, uid: target.card.uid }
-          );
-        };
         if (cost === 0 || distinctEnergy <= 1) {
           let paid = 0;
           while (paid < cost && active.energy.length > 0) {
@@ -582,9 +619,9 @@ export class Game {
             paid += this.energyUnits(discarded, active, this.current).count;
             me.discard.push(discarded);
           }
-          finish();
+          this.finishRetreat(this.current, active.card.uid, target.card.uid);
         } else {
-          this.retreatDiscardChoice(this.current, active, cost, finish);
+          this.retreatDiscardChoice(this.current, active, cost, target.card.uid);
         }
         break;
       }
@@ -606,7 +643,7 @@ export class Game {
     const option = pending.options[optionIndex];
     if (!option) return;
     this.pending = null;
-    option.apply();
+    this.operations.unshift(structuredClone(option.operation));
     this.revision++;
     this.drain();
   }
@@ -656,8 +693,8 @@ export class Game {
     const first = this.flipCoin("Opening coin flip") ? 0 : 1;
     this.addLog(`${this.players[first].name} goes first`);
     this.current = 1 - first;
-    this.thunks.push(() => this.chooseStartingActive(first));
-    this.thunks.push(() => this.chooseStartingActive(1 - first));
+    this.operations.push({ kind: "system", operation: { op: "chooseStartingActive", player: first } });
+    this.operations.push({ kind: "system", operation: { op: "chooseStartingActive", player: 1 - first } });
     this.turnStarting = true;
     this.drain();
   }
@@ -665,19 +702,7 @@ export class Game {
   private chooseStartingActive(p: number): void {
     const player = this.players[p];
     const basics = player.hand.filter((c) => isPokemon(c.def) && c.def.stage === "Basic");
-    const place = (card: CardInstance) => {
-      player.hand = player.hand.filter((c) => c.uid !== card.uid);
-      player.active = makePokemonInPlay(card, 0);
-      const rest = player.hand
-        .filter((c) => isPokemon(c.def) && c.def.stage === "Basic")
-        .slice(0, BENCH_LIMIT);
-      for (const benchCard of rest) {
-        player.hand = player.hand.filter((c) => c.uid !== benchCard.uid);
-        player.bench.push(makePokemonInPlay(benchCard, 0));
-      }
-      this.addLog(`${player.name} starts with ${card.def.name}`);
-    };
-    if (basics.length === 1) { place(basics[0]); return; }
+    if (basics.length === 1) { this.placeStartingActive(p, basics[0].uid); return; }
     this.requestChoice(
       p,
       "Choose your starting Active Pokemon",
@@ -685,11 +710,28 @@ export class Game {
         const def = card.def as PokemonCardDef;
         return {
           label: `${def.name} (${def.hp} HP)`,
+          informationKey: `starting:${card.def.id}`,
           aiScore: pokemonBattleScore(this, makePokemonInPlay(card, 0), p, true),
-          apply: () => place(card),
+          operation: { kind: "system", operation: { op: "placeStartingActive", player: p, cardUid: card.uid } },
         };
       })
     );
+  }
+
+  private placeStartingActive(p: number, cardUid: number): void {
+    const player = this.players[p];
+    const card = player.hand.find((candidate) => candidate.uid === cardUid);
+    if (!card || !isPokemon(card.def) || card.def.stage !== "Basic") return;
+    player.hand = player.hand.filter((candidate) => candidate.uid !== cardUid);
+    player.active = makePokemonInPlay(card, 0);
+    const rest = player.hand
+      .filter((candidate) => isPokemon(candidate.def) && candidate.def.stage === "Basic")
+      .slice(0, BENCH_LIMIT);
+    for (const benchCard of rest) {
+      player.hand = player.hand.filter((candidate) => candidate.uid !== benchCard.uid);
+      player.bench.push(makePokemonInPlay(benchCard, 0));
+    }
+    this.addLog(`${player.name} starts with ${card.def.name}`);
   }
 
   private addLog(
@@ -717,6 +759,8 @@ export class Game {
   private takeFromHand(player: PlayerState, uid: number): CardInstance | null {
     const index = player.hand.findIndex((c) => c.uid === uid);
     if (index === -1) return null;
+    delete this.knownOpponentHands[0][uid];
+    delete this.knownOpponentHands[1][uid];
     return player.hand.splice(index, 1)[0];
   }
 
@@ -756,6 +800,36 @@ export class Game {
       prompt,
       options: options.map((option, index) => ({ ...option, id: option.id ?? `option:${index}` })),
     };
+  }
+
+  private clonePending(pending: PendingChoice): PendingChoice {
+    return {
+      id: pending.id,
+      player: pending.player,
+      prompt: pending.prompt,
+      options: pending.options.map((option) => ({
+        ...option,
+        operation: structuredClone(option.operation),
+      })),
+    };
+  }
+
+  private actionInformationKey(action: Action): string {
+    const semantic: Record<string, unknown> = { ...action };
+    if ("handUid" in action) {
+      semantic.cardId = this.players[this.current].hand
+        .find((card) => card.uid === action.handUid)?.def.id ?? action.handUid;
+      delete semantic.handUid;
+    }
+    if ("target" in action) {
+      semantic.targetUid = this.getPokemon(action.target)?.card.uid ?? action.target;
+      delete semantic.target;
+    }
+    if (action.type === "retreat") {
+      semantic.targetUid = this.players[this.current].bench[action.benchIndex]?.card.uid ?? action.benchIndex;
+      delete semantic.benchIndex;
+    }
+    return JSON.stringify(semantic);
   }
 
   private rareCandyPairs(
@@ -831,24 +905,27 @@ export class Game {
     attackerTypes?: EnergyType[],
     fromAttack?: boolean,
     sourceRef?: SlotRef,
-    attackDamage?: AttackDamageTotal
+    attackId?: number
   ): EffectContext {
     const game = this;
+    const sourceUid = sourceRef ? this.getPokemon(sourceRef)?.card.uid : undefined;
+    const frame: EffectFrame = { controller, attackerTypes, fromAttack, sourceUid, attackId };
     return {
       controller,
       opponent: 1 - controller,
       attackerTypes,
       fromAttack,
       sourceRef,
+      frame,
       get players(): [PlayerState, PlayerState] { return game.players; },
       get turnNumber(): number { return game.turnNumber; },
       getPokemon: (ref) => game.getPokemon(ref),
       allInPlay: (p) => game.allInPlay(p),
       describeSlot: (ref) => game.describeSlot(ref),
-      forEachTarget: (target, prompt, fn) =>
-        game.forEachTarget(target, controller, prompt, fn, sourceRef),
+      targetRefs: (target) => game.targetRefs(target, frame),
       energyUnits: (card, holder, ownerIndex) =>
         game.energyUnits(card, holder, ownerIndex),
+      effectiveHp: (ref, pokemon) => game.effectiveHp(ref, pokemon),
       conditionsPrevented: (ref) =>
         conditionsPrevented(game.players, ref, game.stadium),
       matchesFilter: (def, filter) => matchesFilter(def, filter),
@@ -861,6 +938,16 @@ export class Game {
             def.evolvesFrom === basicName
         ),
       drawCards: (p, count) => game.drawCards(p, count),
+      revealInHand: (owner, card) => {
+        game.knownOpponentHands[1 - owner][card.uid] = card.def.id;
+      },
+      forgetHand: (owner) => {
+        game.knownOpponentHands[1 - owner] = {};
+      },
+      forgetKnownCard: (uid) => {
+        delete game.knownOpponentHands[0][uid];
+        delete game.knownOpponentHands[1][uid];
+      },
       shuffleDeck: (p) => shuffle(() => game.rng.next(), game.players[p].deck),
       swapActive: (p, i) => game.swapActive(p, i),
       evolvePokemon: (pokemon, card) => game.evolvePokemon(pokemon, card),
@@ -875,65 +962,54 @@ export class Game {
           ignoreDefenderEffects
         ),
       addAttackDamage: (amount, ignoreResistance) => {
+        const attackDamage = attackId === undefined ? undefined : game.attackTotals.get(attackId);
         if (!attackDamage) return false;
         attackDamage.amount += amount;
         if (ignoreResistance) attackDamage.ignoreResistance = true;
         return true;
       },
+      currentAttackDamage: () =>
+        attackId === undefined ? 0 : (game.attackTotals.get(attackId)?.amount ?? 0),
       log: (msg, cat, extra) => game.addLog(msg, cat, extra),
       flip: (label) => game.flipCoin(label),
       requestChoice: (player, prompt, options) => game.requestChoice(player, prompt, options),
       queueSwitchChoice: (p) => game.queueSwitchChoice(p),
       queueEffects: (effects) =>
-        game.queueEffectsFor(effects, controller, attackerTypes, fromAttack, sourceRef, attackDamage),
-      queueThunk: (fn) => game.thunks.unshift(fn),
+        game.queueEffectsFor(effects, frame),
+      queueOperation: (operation) => game.operations.unshift(structuredClone(operation)),
+      command: (name, payload) => effectCommand(name, payload, frame),
     };
   }
 
   private queueEffectsFor(
     effects: Effect[],
-    controller: number,
+    controllerOrFrame: number | EffectFrame,
     attackerTypes?: EnergyType[],
     fromAttack?: boolean,
     sourceRef?: SlotRef,
-    attackDamage?: AttackDamageTotal
+    attackId?: number
   ): void {
-    const ctx = this.makeContext(controller, attackerTypes, fromAttack, sourceRef, attackDamage);
-    const thunks = effects.map((effect) => () => {
-      const defender = this.players[1 - controller].active;
-      if (
-        fromAttack &&
-        defender?.guard?.mode === "preventAll" &&
-        this.turnNumber <= defender.guard.untilTurn &&
-        isEffectDoneToDefendingPokemon(effect)
-      ) {
-        this.addLog(`${defender.def.name} prevented an effect of the attack`);
-        return;
-      }
-      runEffect(effect, ctx);
-    });
-    this.thunks.unshift(...thunks);
+    const frame = typeof controllerOrFrame === "number"
+      ? {
+          controller: controllerOrFrame,
+          attackerTypes,
+          fromAttack,
+          sourceUid: sourceRef ? this.getPokemon(sourceRef)?.card.uid : undefined,
+          attackId,
+        }
+      : controllerOrFrame;
+    this.operations.unshift(...effects.map((effect) => effectOperation(effect, frame)));
   }
 
-  private forEachTarget(
-    target: import("../model/effects").EffectTarget,
-    controller: number,
-    prompt: string,
-    handler: (ref: SlotRef) => void,
-    sourceRef?: SlotRef
-  ): void {
+  private targetRefs(target: import("../model/effects").EffectTarget, frame: EffectFrame): SlotRef[] {
+    const controller = frame.controller;
     switch (target) {
       case "defending":
-        handler({ p: 1 - controller, slot: "active" });
-        return;
+        return [{ p: 1 - controller, slot: "active" }];
       case "self":
-        handler(sourceRef ?? { p: controller, slot: "active" });
-        return;
+        return [this.findPokemonRef(frame.sourceUid) ?? { p: controller, slot: "active" }];
       case "eachOpponentBench":
-        this.players[1 - controller].bench.forEach((_, i) =>
-          handler({ p: 1 - controller, slot: i })
-        );
-        return;
+        return this.players[1 - controller].bench.map((_, i) => ({ p: 1 - controller, slot: i }));
       case "opponentBenchChoice":
       case "anyOpponentChoice":
       case "selfBenchChoice":
@@ -942,28 +1018,25 @@ export class Game {
           target === "opponentBenchChoice" || target === "anyOpponentChoice"
             ? 1 - controller
             : controller;
-        const opposing = p !== controller;
-        const candidates =
+        return (
           target === "anySelfChoice" || target === "anyOpponentChoice"
-            ? this.allInPlay(p)
-            : this.players[p].bench.map((pokemon, i) => ({
-                ref: { p, slot: i } as SlotRef,
-                pokemon,
-              }));
-        if (candidates.length === 0) return;
-        if (candidates.length === 1) { handler(candidates[0].ref); return; }
-        this.requestChoice(
-          controller,
-          `${prompt}:`,
-          candidates.map(({ ref, pokemon }) => ({
-            label: this.describeSlot(ref),
-            aiScore: opposing ? pokemon.damage + 10 : pokemon.damage,
-            apply: () => handler(ref),
-          }))
+            ? this.allInPlay(p).map(({ ref }) => ref)
+            : this.players[p].bench.map((_, i) => ({
+                p,
+                slot: i,
+              } as SlotRef))
         );
-        return;
       }
     }
+  }
+
+  private findPokemonRef(uid: number | undefined): SlotRef | null {
+    if (uid === undefined) return null;
+    for (let p = 0; p < 2; p++) {
+      for (const { ref, pokemon } of this.allInPlay(p))
+        if (pokemon.card.uid === uid) return ref;
+    }
+    return null;
   }
 
   // ── Damage pipeline ──────────────────────────────────────────────────────
@@ -1066,83 +1139,55 @@ export class Game {
       (!boost.attackName || boost.attackName === attack.name)
         ? boost.amount
         : 0;
-    const attackDamage: AttackDamageTotal = {
+    const attackId = ++this.attackSeq;
+    this.attackTotals.set(attackId, {
       amount: (attack.damage ?? 0) + bonus,
       ignoreResistance: attack.ignoreResistance ?? false,
-    };
-    active.attackBoost = null;
-    this.thunks.push(() => {
-      if (attackDamage.amount > 0) {
-        this.dealAttackDamage(
-          { p: 1 - this.current, slot: "active" },
-          attackDamage.amount,
-          { controller: this.current, attackerTypes: active.def.types, fromAttack: true },
-          undefined,
-          attackDamage.ignoreResistance
-        );
-      }
     });
+    active.attackBoost = null;
+    this.operations.push({ kind: "system", operation: { op: "finishAttackDamage", attackId } });
     this.queueEffectsFor(attack.effects ?? [], this.current, active.def.types, true, {
       p: this.current,
       slot: "active",
-    }, attackDamage);
+    }, attackId);
   }
 
   // ── Switch choice helper ─────────────────────────────────────────────────
 
   private queueSwitchChoice(p: number): void {
-    this.thunks.unshift(() => {
-      const player = this.players[p];
-      if (!player.active || player.bench.length === 0) return;
-      if (player.bench.length === 1) {
-        const target = player.bench[0];
-        this.swapActive(p, 0);
-        this.addLog(`${player.name} switches to ${target.def.name}`, "switch", {
-          player: p,
-          uid: target.card.uid,
-        });
-        return;
-      }
-      this.requestChoice(
-        p,
-        "Switch to which Pokemon?",
-        player.bench.map((pokemon, i) => ({
-          label: pokemon.def.name,
-          aiScore: pokemonBattleScore(this, pokemon, p, true),
-          apply: () => {
-            this.swapActive(p, i);
-            this.addLog(`${player.name} switches to ${pokemon.def.name}`, "switch", {
-              player: p,
-              uid: pokemon.card.uid,
-            });
-          },
-        }))
-      );
-    });
+    this.operations.unshift({ kind: "system", operation: { op: "queueSwitchChoice", player: p } });
   }
 
   private retreatDiscardChoice(
     p: number,
     active: PokemonInPlay,
     remaining: number,
-    finish: () => void
+    targetUid: number
   ): void {
-    if (remaining <= 0 || active.energy.length === 0) { finish(); return; }
+    if (remaining <= 0 || active.energy.length === 0) {
+      this.operations.unshift({
+        kind: "system",
+        operation: { op: "finishRetreat", player: p, activeUid: active.card.uid, targetUid },
+      });
+      return;
+    }
     this.requestChoice(
       p,
       `Discard Energy to retreat (${remaining} more needed)`,
       active.energy.map((card) => ({
         label: card.def.name,
+        informationKey: `retreat-energy:${card.def.id}`,
         aiScore: -this.energyUnits(card, active, p).count,
-        apply: () => {
-          const index = active.energy.findIndex((c) => c.uid === card.uid);
-          if (index === -1) return;
-          const discarded = active.energy.splice(index, 1)[0];
-          this.players[p].discard.push(discarded);
-          const units = this.energyUnits(discarded, active, p).count;
-          this.thunks.unshift(() =>
-            this.retreatDiscardChoice(p, active, remaining - units, finish)
-          );
+        operation: {
+          kind: "system",
+          operation: {
+            op: "retreatDiscard",
+            player: p,
+            activeUid: active.card.uid,
+            targetUid,
+            cardUid: card.uid,
+            remaining,
+          },
         },
       }))
     );
@@ -1150,14 +1195,175 @@ export class Game {
 
   // ── Main loop ────────────────────────────────────────────────────────────
 
+  private executeOperation(queued: QueuedOperation): void {
+    if (queued.kind === "system") {
+      this.executeSystemOperation(queued.operation);
+      return;
+    }
+    const sourceRef = this.findPokemonRef(queued.frame.sourceUid) ?? undefined;
+    const context = this.makeContext(
+      queued.frame.controller,
+      queued.frame.attackerTypes,
+      queued.frame.fromAttack,
+      sourceRef,
+      queued.frame.attackId
+    );
+    if (queued.kind === "effectCommand") {
+      runEffectCommand(queued.command, queued.payload, context);
+      return;
+    }
+    const defender = this.players[1 - queued.frame.controller].active;
+    if (
+      queued.frame.fromAttack &&
+      defender?.guard?.mode === "preventAll" &&
+      this.turnNumber <= defender.guard.untilTurn &&
+      isEffectDoneToDefendingPokemon(queued.effect)
+    ) {
+      this.addLog(`${defender.def.name} prevented an effect of the attack`);
+      return;
+    }
+    runEffect(queued.effect, context);
+  }
+
+  private executeSystemOperation(operation: SystemOperation): void {
+    switch (operation.op) {
+      case "chooseStartingActive":
+        this.chooseStartingActive(operation.player);
+        return;
+      case "placeStartingActive":
+        this.placeStartingActive(operation.player, operation.cardUid);
+        return;
+      case "finishAttackDamage": {
+        const total = this.attackTotals.get(operation.attackId);
+        if (!total) return;
+        this.attackTotals.delete(operation.attackId);
+        const controller = this.current;
+        const attacker = this.players[controller].active;
+        if (total.amount > 0 && attacker)
+          this.dealAttackDamage(
+            { p: 1 - controller, slot: "active" }, total.amount,
+            { controller, attackerTypes: attacker.def.types, fromAttack: true },
+            undefined, total.ignoreResistance
+          );
+        return;
+      }
+      case "queueSwitchChoice": {
+        const player = this.players[operation.player];
+        if (!player.active || player.bench.length === 0) return;
+        if (player.bench.length === 1) {
+          this.switchPokemon(operation.player, player.bench[0].card.uid);
+          return;
+        }
+        this.requestChoice(
+          operation.player,
+          "Switch to which Pokemon?",
+          player.bench.map((pokemon) => ({
+            label: this.describeSlot(this.findPokemonRef(pokemon.card.uid)!),
+            informationKey: `switch:${pokemon.card.uid}`,
+            aiScore: pokemonBattleScore(this, pokemon, operation.player, true),
+            operation: {
+              kind: "system",
+              operation: { op: "switchPokemon", player: operation.player, pokemonUid: pokemon.card.uid },
+            },
+          }))
+        );
+        return;
+      }
+      case "switchPokemon":
+        this.switchPokemon(operation.player, operation.pokemonUid);
+        return;
+      case "retreatDiscard": {
+        const ref = this.findPokemonRef(operation.activeUid);
+        const active = ref ? this.getPokemon(ref) : null;
+        if (!active) return;
+        const index = active.energy.findIndex((card) => card.uid === operation.cardUid);
+        if (index === -1) return;
+        const discarded = active.energy.splice(index, 1)[0];
+        this.players[operation.player].discard.push(discarded);
+        const units = this.energyUnits(discarded, active, operation.player).count;
+        this.retreatDiscardChoice(
+          operation.player, active, operation.remaining - units, operation.targetUid
+        );
+        return;
+      }
+      case "finishRetreat":
+        this.finishRetreat(operation.player, operation.activeUid, operation.targetUid);
+        return;
+      case "promotePokemon": {
+        const player = this.players[operation.player];
+        const index = player.bench.findIndex((pokemon) => pokemon.card.uid === operation.pokemonUid);
+        if (index < 0 || player.active) return;
+        const promoted = player.bench.splice(index, 1)[0];
+        player.active = promoted;
+        this.addLog(`${player.name} promotes ${promoted.def.name}`, "switch", {
+          player: operation.player,
+          uid: promoted.card.uid,
+        });
+        return;
+      }
+      case "targetEffect":
+        this.applyTargetEffect(operation.effect, operation.targetUid, operation.frame);
+        return;
+    }
+  }
+
+  private switchPokemon(p: number, pokemonUid: number): void {
+    const player = this.players[p];
+    const index = player.bench.findIndex((pokemon) => pokemon.card.uid === pokemonUid);
+    if (index < 0) return;
+    const target = player.bench[index];
+    this.swapActive(p, index);
+    this.addLog(`${player.name} switches to ${target.def.name}`, "switch", {
+      player: p,
+      uid: target.card.uid,
+    });
+  }
+
+  private finishRetreat(p: number, activeUid: number, targetUid: number): void {
+    const player = this.players[p];
+    if (player.active?.card.uid !== activeUid) return;
+    const index = player.bench.findIndex((pokemon) => pokemon.card.uid === targetUid);
+    if (index < 0) return;
+    const activeName = player.active.def.name;
+    const targetName = player.bench[index].def.name;
+    this.swapActive(p, index);
+    this.addLog(`${player.name} retreats ${activeName} for ${targetName}`, "switch", {
+      player: p,
+      uid: targetUid,
+    });
+  }
+
+  private applyTargetEffect(effect: Effect, targetUid: number, frame: EffectFrame): void {
+    const ref = this.findPokemonRef(targetUid);
+    const target = ref ? this.getPokemon(ref) : null;
+    if (!ref || !target) return;
+    const context = this.makeContext(
+      frame.controller, frame.attackerTypes, frame.fromAttack,
+      this.findPokemonRef(frame.sourceUid) ?? undefined, frame.attackId
+    );
+    if (effect.op === "damage") {
+      if (
+        effect.applyWR !== false && ref.p === context.opponent && ref.slot === "active" &&
+        context.addAttackDamage(effect.amount, effect.ignoreResistance)
+      ) return;
+      context.dealDamage(ref, effect.amount, effect.applyWR, effect.ignoreResistance, effect.ignoreDefenderEffects);
+    } else if (effect.op === "damageCounters") {
+      target.damage += effect.count * 10;
+      this.addLog(`${target.def.name} gets ${effect.count} damage counter(s)`, "damage", {
+        uid: target.card.uid,
+        amount: effect.count * 10,
+      });
+    }
+  }
+
   private drain(): void {
     let guard = 0;
     while (guard++ < 10000) {
       if (this.phase !== "playing") break;
       if (this.pending) break;
-      if (this.thunks.length > 0) {
-        const thunk = this.thunks.shift()!;
-        thunk();
+      if (this.operations.length > 0) {
+        const operation = this.operations.shift()!;
+        this.executeOperation(operation);
         continue;
       }
       if (this.processKnockouts()) continue;
@@ -1225,17 +1431,11 @@ export class Game {
       this.requestChoice(
         p,
         "Promote which Pokemon to Active?",
-        player.bench.map((pokemon, i) => ({
+        player.bench.map((pokemon) => ({
           label: `${pokemon.def.name} (${pokemon.def.hp - pokemon.damage} HP left)`,
+          informationKey: `promote:${pokemon.card.uid}`,
           aiScore: pokemonBattleScore(this, pokemon, p, true),
-          apply: () => {
-            const promoted = player.bench.splice(i, 1)[0];
-            player.active = promoted;
-            this.addLog(`${player.name} promotes ${promoted.def.name}`, "switch", {
-              player: p,
-              uid: promoted.card.uid,
-            });
-          },
+          operation: { kind: "system", operation: { op: "promotePokemon", player: p, pokemonUid: pokemon.card.uid } },
         }))
       );
       return true;

@@ -5,7 +5,52 @@ import type { EnergyType } from "../../model/energy";
 import type { SlotRef } from "../../core/state";
 import type { ChoiceOption } from "../../core/choice";
 import type { EffectContext } from "../context";
-import { defineEffect } from "../registry";
+import { defineEffect, defineEffectCommand } from "../registry";
+
+function applyTargetedEffect(
+  effect: Extract<import("../../model/effects").Effect, { op: "damage" | "damageCounters" }>,
+  ctx: EffectContext
+): void {
+  const refs = ctx.targetRefs(effect.target);
+  const apply = (ref: SlotRef) => {
+    const pokemon = ctx.getPokemon(ref);
+    if (!pokemon) return;
+    if (effect.op === "damage") {
+      if (
+        effect.applyWR !== false && ref.p === ctx.opponent && ref.slot === "active" &&
+        ctx.addAttackDamage(effect.amount, effect.ignoreResistance)
+      ) return;
+      ctx.dealDamage(ref, effect.amount, effect.applyWR, effect.ignoreResistance, effect.ignoreDefenderEffects);
+      return;
+    }
+    pokemon.damage += effect.count * 10;
+    ctx.log(`${pokemon.def.name} gets ${effect.count} damage counter(s)`, "damage", {
+      uid: pokemon.card.uid,
+      amount: effect.count * 10,
+    });
+  };
+  const isChoice = effect.target.endsWith("Choice");
+  if (!isChoice || refs.length <= 1) {
+    refs.forEach(apply);
+    return;
+  }
+  ctx.requestChoice(
+    ctx.controller,
+    effect.op === "damage" ? `Deal ${effect.amount} damage to:` : `Put ${effect.count} damage counter(s) on:`,
+    refs.flatMap((ref) => {
+      const pokemon = ctx.getPokemon(ref);
+      return pokemon ? [{
+        label: ctx.describeSlot(ref),
+        informationKey: `target:${pokemon.card.uid}`,
+        aiScore: ref.p === ctx.opponent ? pokemon.damage + 10 : -pokemon.damage,
+        operation: {
+          kind: "system" as const,
+          operation: { op: "targetEffect" as const, effect, targetUid: pokemon.card.uid, frame: ctx.frame },
+        },
+      }] : [];
+    })
+  );
+}
 
 defineEffect<{
   op: "damage";
@@ -16,34 +61,13 @@ defineEffect<{
   ignoreDefenderEffects?: boolean;
 }>({
   op: "damage",
-  run: (e, ctx) => {
-    ctx.forEachTarget(e.target, `Deal ${e.amount} damage to`, (ref) => {
-      if (
-        e.applyWR !== false &&
-        ref.p === ctx.opponent &&
-        ref.slot === "active" &&
-        ctx.addAttackDamage(e.amount, e.ignoreResistance)
-      ) return;
-      ctx.dealDamage(ref, e.amount, e.applyWR, e.ignoreResistance, e.ignoreDefenderEffects);
-    });
-  },
+  run: applyTargetedEffect,
   aiValue: (e) => e.amount * 0.8,
 });
 
 defineEffect<{ op: "damageCounters"; count: number; target: EffectTarget }>({
   op: "damageCounters",
-  run: (e, ctx) => {
-    ctx.forEachTarget(e.target, `Put ${e.count} damage counter(s) on`, (ref) => {
-      const target = ctx.getPokemon(ref);
-      if (target) {
-        target.damage += e.count * 10;
-        ctx.log(`${target.def.name} gets ${e.count} damage counter(s)`, "damage", {
-          uid: target.card.uid,
-          amount: e.count * 10,
-        });
-      }
-    });
-  },
+  run: applyTargetedEffect,
   aiValue: (e) => e.count * 10 * 0.8,
 });
 
@@ -96,10 +120,7 @@ defineEffect<{ op: "damagePerHeads"; flips: number; amount: number; target: Effe
     for (let i = 0; i < e.flips; i++) if (ctx.flip("Coin flip")) heads++;
     const total = heads * e.amount;
     if (total > 0) {
-      ctx.forEachTarget(e.target, `Deal ${total} damage to`, (ref) => {
-        if (ref.p === ctx.opponent && ref.slot === "active" && ctx.addAttackDamage(total)) return;
-        ctx.dealDamage(ref, total);
-      });
+      applyTargetedEffect({ op: "damage", amount: total, target: e.target }, ctx);
     } else if (e.recoilIfNoHeads) {
       const attacker = ctx.players[ctx.controller].active;
       if (attacker) {
@@ -220,11 +241,7 @@ function discardEnergyLoop(
   const active = ctx.players[p].active;
   const finish = () => {
     if (discarded > 0)
-      ctx.queueThunk(() => {
-        const amount = discarded * damagePerEnergy;
-        if (!ctx.addAttackDamage(amount))
-          ctx.dealDamage({ p: ctx.opponent, slot: "active" }, amount);
-      });
+      ctx.queueOperation(ctx.command("damage.finishEnergyDiscard", { discarded, damagePerEnergy }));
   };
   if (!active) { finish(); return; }
   const matches = (c: CardInstance) =>
@@ -234,25 +251,19 @@ function discardEnergyLoop(
   const options: ChoiceOption[] = [
     ...available.map((card) => ({
       label: `Discard ${card.def.name} (+${damagePerEnergy} damage)`,
-      aiScore: damagePerEnergy - 5,
-      apply: () => {
-        const idx = active.energy.findIndex((c) => c.uid === card.uid);
-        if (idx !== -1) {
-          ctx.players[p].discard.push(active.energy.splice(idx, 1)[0]);
-          ctx.log(`${active.def.name} discards ${card.def.name} for extra damage`);
-        }
-        ctx.queueThunk(() => discardEnergyLoop(ctx, energyType, damagePerEnergy, discarded + 1));
-      },
+      informationKey: `discard-energy:${card.def.id}`,
+      aiScore: ctx.currentAttackDamage() + discarded * damagePerEnergy >=
+        (ctx.players[ctx.opponent].active?.def.hp ?? Infinity) -
+        (ctx.players[ctx.opponent].active?.damage ?? 0) ? -20 : damagePerEnergy - 5,
+      operation: ctx.command("damage.discardEnergy", {
+        cardUid: card.uid, energyType, damagePerEnergy, discarded,
+      }),
     })),
     {
       label: discarded > 0 ? "Stop discarding" : "Don't discard",
+      informationKey: "stop-discarding",
       aiScore: -1,
-      apply: () => {
-        if (discarded > 0)
-          ctx.queueThunk(() =>
-            ctx.dealDamage({ p: ctx.opponent, slot: "active" }, discarded * damagePerEnergy)
-          );
-      },
+      operation: ctx.command("damage.finishEnergyDiscard", { discarded, damagePerEnergy }),
     },
   ];
   ctx.requestChoice(p, `Discard energy for +${damagePerEnergy} damage each?`, options);
@@ -263,6 +274,33 @@ defineEffect<{ op: "discardEnergyForDamage"; damagePerEnergy: number; energyType
   run: (e, ctx) => discardEnergyLoop(ctx, e.energyType, e.damagePerEnergy, 0),
   aiValue: (e) => e.damagePerEnergy * 1.5,
 });
+
+defineEffectCommand<{
+  cardUid: number;
+  energyType?: EnergyType;
+  damagePerEnergy: number;
+  discarded: number;
+}>("damage.discardEnergy", (payload, ctx) => {
+  const active = ctx.players[ctx.controller].active;
+  if (!active) return;
+  const index = active.energy.findIndex((card) => card.uid === payload.cardUid);
+  if (index === -1) return;
+  const card = active.energy.splice(index, 1)[0];
+  ctx.players[ctx.controller].discard.push(card);
+  ctx.log(`${active.def.name} discards ${card.def.name} for extra damage`);
+  discardEnergyLoop(
+    ctx, payload.energyType, payload.damagePerEnergy, payload.discarded + 1
+  );
+});
+
+defineEffectCommand<{ discarded: number; damagePerEnergy: number }>(
+  "damage.finishEnergyDiscard",
+  (payload, ctx) => {
+    const amount = payload.discarded * payload.damagePerEnergy;
+    if (amount > 0 && !ctx.addAttackDamage(amount))
+      ctx.dealDamage({ p: ctx.opponent, slot: "active" }, amount);
+  }
+);
 
 defineEffect<{ op: "discardDefenderSpecialEnergyBonus"; bonus: number }>({
   op: "discardDefenderSpecialEnergyBonus",

@@ -1,12 +1,14 @@
 import cardsJson from "../src/data/cards.json";
 import decksJson from "../src/data/decks.json";
-import { searchDecision } from "../src/ai/ismcts";
 import { BALANCED } from "../src/ai/profiles";
 import { chooseActionSeeded, chooseOptionSeeded } from "../src/ai/simpleAI";
 import { SeededRng } from "../src/core/rng";
+import { HeadlessSearchAgent } from "../src/ai/headlessAgent";
 import { Game } from "../src/engine/game";
 import type { CardDef } from "../src/model/cards";
 import { buildDeck, buildLibrary } from "../src/model/loader";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 
 const library = buildLibrary(cardsJson as CardDef[]);
 const decks = decksJson as Record<string, Record<string, number>>;
@@ -15,6 +17,7 @@ const iterations = Number(process.argv[3] ?? 128);
 const deckLimit = Number(process.argv[4] ?? Object.keys(decks).length);
 const names = Object.keys(decks).slice(0, deckLimit);
 const mirrorOnly = process.argv[5] === "mirror";
+const outputArg = process.argv.find((argument) => argument.startsWith("--output="));
 
 let wins = 0;
 let losses = 0;
@@ -24,6 +27,12 @@ let totalIterations = 0;
 const perDeck = new Map<string, { wins: number; games: number }>();
 const expertActions = new Map<string, number>();
 const legacyActions = new Map<string, number>();
+const expertChoices = new Map<string, number>();
+let totalElapsedMs = 0;
+let maxElapsedMs = 0;
+let reusedPlans = 0;
+let forcedDecisions = 0;
+const matchups: Array<{ expertDeck: string; opponentDeck: string; seat: number; seed: number; winner: number | null }> = [];
 const countAction = (counts: Map<string, number>, type: string) =>
   counts.set(type, (counts.get(type) ?? 0) + 1);
 
@@ -55,20 +64,23 @@ for (let expertDeck = 0; expertDeck < names.length; expertDeck++) {
         const legacyRng = new SeededRng(
           0x51a7 + expertDeck * 1000 + legacyDeck * 100 + pair * 2 + expertSeat
         );
+        const expert = new HeadlessSearchAgent(library, BALANCED, iterations);
         let steps = 0;
         while (game.phase === "playing" && steps++ < 4000) {
           const actor = game.pending?.player ?? game.current;
-          if (game.pending) {
-            game.resolvePending(chooseOptionSeeded(game.pending, BALANCED, legacyRng));
-          } else if (actor === expertSeat) {
-            const result = searchDecision(game.getInformationState(actor), library, BALANCED, {
-              seed: 0xabc000 + steps * 31 + pair,
-              maxIterations: iterations,
-            });
+          if (actor === expertSeat) {
+            const result = expert.choose(game, 0xabc000 + steps * 31 + pair);
             if (result.decision.kind === "action") countAction(expertActions, result.decision.action.type);
+            else countAction(expertChoices, game.pending?.prompt ?? "unknown");
             game.applyDecision(result.decision);
             decisions++;
             totalIterations += result.iterations;
+            totalElapsedMs += result.elapsedMs;
+            maxElapsedMs = Math.max(maxElapsedMs, result.elapsedMs);
+            if (result.reusedPlan) reusedPlans++;
+            if (result.forced) forcedDecisions++;
+          } else if (game.pending) {
+            game.resolvePending(chooseOptionSeeded(game.pending, BALANCED, legacyRng));
           } else {
             const action = chooseActionSeeded(game, BALANCED, legacyRng);
             countAction(legacyActions, action.type);
@@ -81,26 +93,66 @@ for (let expertDeck = 0; expertDeck < names.length; expertDeck++) {
         else if (game.winner === expertSeat) { wins++; record.wins++; }
         else losses++;
         perDeck.set(names[expertDeck], record);
+        matchups.push({
+          expertDeck: names[expertDeck],
+          opponentDeck: names[legacyDeck],
+          seat: expertSeat,
+          seed: 10_000 + expertDeck * 1000 + legacyDeck * 100 + pair * 2,
+          winner: game.winner,
+        });
       }
     }
   }
 }
 
 const games = wins + losses;
-console.log(JSON.stringify({
+const pointWinRate = games ? wins / games : 0;
+const releaseMode = seedPairs >= 20 && iterations >= 512 && names.length === 7 && mirrorOnly;
+const weakDecks = [...perDeck]
+  .filter(([, result]) => result.games > 0 && result.wins / result.games < 0.4)
+  .map(([name]) => name);
+const releaseGate = {
+  enabled: releaseMode,
+  zeroFailures: failures === 0,
+  withinFiveSeconds: maxElapsedMs <= 5000,
+  aboveLegacy: pointWinRate > 0.5,
+  weakDecks,
+};
+const searchedDecisions = decisions - reusedPlans - forcedDecisions;
+const report = {
   games,
   wins,
   losses,
   failures,
-  pointWinRate: games ? wins / games : 0,
+  pointWinRate,
   wilson95Lower: wilsonLower(wins, games),
   expertDecisions: decisions,
   meanIterations: decisions ? totalIterations / decisions : 0,
+  meanElapsedMs: decisions ? totalElapsedMs / decisions : 0,
+  maxElapsedMs,
+  reusedPlans,
+  forcedDecisions,
+  searchedDecisions,
+  planReuseRate: decisions ? reusedPlans / decisions : 0,
   expertActions: Object.fromEntries(expertActions),
+  expertChoices: Object.fromEntries(expertChoices),
   legacyActions: Object.fromEntries(legacyActions),
   perDeck: Object.fromEntries(
     [...perDeck].map(([name, result]) => [name, { ...result, winRate: result.wins / result.games }])
   ),
-}, null, 2));
+  matchups,
+  releaseGate,
+};
+const json = JSON.stringify(report, null, 2);
+console.log(json);
+if (outputArg) {
+  const outputPath = resolve(outputArg.slice("--output=".length));
+  mkdirSync(dirname(outputPath), { recursive: true });
+  writeFileSync(outputPath, `${json}\n`, "utf8");
+}
 
-process.exit(failures === 0 ? 0 : 1);
+const releasePassed = !releaseMode || (
+  releaseGate.zeroFailures && releaseGate.withinFiveSeconds &&
+  releaseGate.aboveLegacy && releaseGate.weakDecks.length === 0
+);
+process.exit(failures === 0 && releasePassed ? 0 : 1);

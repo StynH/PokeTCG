@@ -33,6 +33,21 @@ function assignDefinitions(
   });
 }
 
+function assignHandDefinitions(
+  cards: CardInstance[],
+  known: Record<number, string>,
+  ids: string[],
+  library: CardLibrary,
+  cursor: { value: number }
+): CardInstance[] {
+  return cards.map((card) => {
+    const id = known[card.uid] ?? ids[cursor.value++];
+    const def = library[id];
+    if (!def) throw new Error(`Unknown card in determinization: ${id}`);
+    return { uid: card.uid, def };
+  });
+}
+
 export function determinize(
   information: InformationState,
   library: CardLibrary,
@@ -58,15 +73,26 @@ export function determinize(
     if (snapshot.stadium?.owner === p) removeKnown(pool, snapshot.stadium.card.def.id);
     if (p === information.observer)
       for (const card of player.hand) removeKnown(pool, card.def.id);
+    const knownHand = p === information.observer
+      ? {}
+      : snapshot.knownOpponentHands[information.observer];
+    if (p !== information.observer)
+      for (const card of player.hand) {
+        const cardId = knownHand[card.uid];
+        if (cardId) removeKnown(pool, cardId);
+      }
 
     const hiddenCount =
       player.deck.length + player.prizes.length +
-      (p === information.observer ? 0 : player.hand.length);
+      (p === information.observer
+        ? 0
+        : player.hand.filter((card) => !knownHand[card.uid]).length);
     if (pool.length !== hiddenCount)
       throw new Error(`Impossible information state for player ${p}: ${pool.length} cards for ${hiddenCount} hidden slots`);
     shuffle(() => rng.next(), pool);
     const cursor = { value: 0 };
-    if (p !== information.observer) player.hand = assignDefinitions(player.hand, pool, library, cursor);
+    if (p !== information.observer)
+      player.hand = assignHandDefinitions(player.hand, knownHand, pool, library, cursor);
     player.deck = assignDefinitions(player.deck, pool, library, cursor);
     player.prizes = assignDefinitions(player.prizes, pool, library, cursor);
   }

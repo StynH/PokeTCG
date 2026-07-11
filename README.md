@@ -46,19 +46,22 @@ See [CARD_SCRIPTING.md](CARD_SCRIPTING.md) for the complete schema, effect op re
 
 ## Expert AI
 
-The browser runs expert information-set search in a Web Worker for up to five seconds per nontrivial decision. Hidden hand, deck, and prize identities are redacted before crossing the worker boundary. Personalities share the same search budget and tactical evaluator; their weights only provide bounded preferences between strategically close moves.
+The browser runs expert information-set search in a Web Worker with a five-second budget shared across each turn. Hidden hand, deck, prize, and non-observer knowledge are redacted before crossing the worker boundary. Hidden-card worlds and future chance outcomes use independent samples, while publicly revealed opponent-hand cards remain pinned until they leave or are shuffled out of that hand. Follow-up actions and card-effect choices reuse the searched principal variation; some budget is reserved to replan when chance or newly observed information invalidates it.
 
 ```sh
 npm run test:ai
 npm run benchmark:ai -- 5 1024 7 mirror
+npm run benchmark:ai:release
 ```
 
-Benchmark arguments are paired seeds, simulations per expert decision, deck archetypes, and an optional `mirror` mode. Mirror mode isolates policy strength by giving both AIs the same deck; omit it for the full cross-deck matrix.
+Benchmark arguments are paired seeds, simulations per expert decision, deck archetypes, and an optional `mirror` mode. Mirror mode isolates policy strength by giving both AIs the same deck; omit it for the full cross-deck matrix. The release command runs the fixed 20-pair, 512-iteration, seven-deck mirror matrix and writes `benchmark-results/ai-latest.json`. Reports include effect choices, PV reuse, latency, failures, and per-match seeds.
 
 ## Architecture
 
 - [src/model/types.ts](src/model/types.ts) — card schema and effect DSL
 - [src/model/loader.ts](src/model/loader.ts) — library building and deck validation
 - [src/engine/game.ts](src/engine/game.ts) — rules engine: turn flow, checkup, effect interpreter, pending-choice system
+- [src/core/operations.ts](src/core/operations.ts) — serializable effect/system operation queue and decision continuations
 - [src/ai/simpleAI.ts](src/ai/simpleAI.ts) — heuristic action scoring over the same legal-action list the UI uses
+- [src/rules/combatProjection.ts](src/rules/combatProjection.ts) — shared modifier-aware tactical damage projection
 - [src/ui/render.ts](src/ui/render.ts) — DOM renderer, re-rendered from state on every change

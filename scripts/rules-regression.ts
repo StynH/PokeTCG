@@ -37,11 +37,11 @@ function configuredGame(
   game.players[1].hand = [];
   game.players[1].turnsTaken = 2;
   const internals = game as unknown as {
-    thunks: Array<() => void>;
+    operations: unknown[];
     turnEnding: boolean;
     turnStarting: boolean;
   };
-  internals.thunks = [];
+  internals.operations = [];
   internals.turnEnding = false;
   internals.turnStarting = false;
   game.log.length = 0;

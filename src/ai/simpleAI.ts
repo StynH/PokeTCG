@@ -1,11 +1,12 @@
 import type { Action, Game, PendingChoice, PokemonInPlay } from "../engine/game";
 import { PRIZE_COUNT } from "../engine/game";
-import { isEnergy, isPokemon, isTrainer, resistancesOf } from "../model/types";
+import { isPokemon, isTrainer } from "../model/types";
 import type { AttackDef, CardInstance, EnergyType } from "../model/types";
 import type { AIProfile, StrategyWeights } from "./profiles";
 import { BALANCED } from "./profiles";
-import { pokemonBattleScore } from "./choiceScoring";
+import { attachedCardTacticalValue, pokemonBattleScore } from "./choiceScoring";
 import { SeededRng } from "../core/rng";
+import { intrinsicAttackValue, projectAttackDamage } from "../rules/combatProjection";
 
 const SAMPLES = 4;
 const ROLLOUT_LIMIT = 40;
@@ -18,98 +19,9 @@ function nextSeed(rng: SeededRng): number {
   return Math.floor(rng.next() * 2147483647);
 }
 
-function flipFactor(w: StrategyWeights): number {
-  return 0.3 + 0.2 * w.risk;
-}
-
 function expectedDamage(attack: AttackDef, pokemon: PokemonInPlay | undefined, w: StrategyWeights): number {
-  const flips = flipFactor(w);
-  const boost = pokemon?.attackBoost;
-  let damage =
-    (attack.damage ?? 0) +
-    (boost && (!boost.attackName || boost.attackName === attack.name) ? boost.amount : 0);
-  for (const effect of attack.effects ?? []) {
-    if (effect.op === "damagePerHeads") damage += effect.flips * effect.amount * flips;
-    if (effect.op === "damage") damage += effect.amount;
-    if (effect.op === "damageCounters") damage += effect.count * 10 * 0.8;
-    if (effect.op === "flip") {
-      for (const sub of effect.heads) {
-        if (sub.op === "damage") damage += sub.amount * flips;
-        if (sub.op === "applyCondition" || sub.op === "applyPoison" || sub.op === "applyBurn")
-          damage += 24 * flips * w.disruption;
-      }
-    }
-    if (effect.op === "applyCondition" || effect.op === "applyPoison" || effect.op === "applyBurn")
-      damage += 20 * w.disruption;
-    if (effect.op === "nextAttackBonus") damage += effect.amount * 0.65;
-  }
-  return damage;
-}
-
-function expectedAttackDamage(
-  game: Game,
-  attack: AttackDef,
-  attacker: PokemonInPlay,
-  owner: number,
-  defender: PokemonInPlay | null,
-  w: StrategyWeights
-): number {
-  let damage = expectedDamage(attack, attacker, w);
-  for (const effect of attack.effects ?? []) {
-    if (effect.op === "damageScaled") {
-      const scale = (() => {
-        switch (effect.per) {
-          case "attackerEnergy": return game.totalEnergyUnits(attacker, owner);
-          case "defenderEnergy": return defender ? game.totalEnergyUnits(defender, 1 - owner) : 0;
-          case "defenderDamageCounters": return defender ? Math.floor(defender.damage / 10) : 0;
-          case "selfDamageCounters": return Math.floor(attacker.damage / 10);
-          case "yourBench": return game.players[owner].bench.length;
-          case "oppBench": return game.players[1 - owner].bench.length;
-        }
-      })();
-      damage = Math.max(damage, effect.base + scale * effect.amount);
-    }
-    if (effect.op === "damageIfDefenderNoEnergy" && defender?.energy.length === 0)
-      damage += effect.bonus;
-    if (
-      effect.op === "damageIfDefenderSpecialEnergy" &&
-      defender?.energy.some((card) => isEnergy(card.def) && !card.def.isBasic)
-    ) damage += effect.bonus;
-    if (
-      effect.op === "damageIfDefenderResistance" &&
-      defender && resistancesOf(defender.def).includes(effect.resistanceType)
-    ) damage += effect.bonus;
-    if (effect.op === "damageIfStatus" && defender) {
-      const affected = effect.status === "burned"
-        ? defender.burned
-        : effect.status === "poisoned"
-          ? defender.poisonCounters > 0
-          : defender.condition === effect.status;
-      if (affected) damage += effect.bonus;
-    }
-    if (effect.op === "damagePerFlipsPerEnergy") {
-      const matching = attacker.energy.filter((card) =>
-        !effect.energyType || game.energyUnits(card, attacker, owner).provides.includes(effect.energyType)
-      ).length;
-      damage = Math.max(damage, effect.base + matching * effect.amount * flipFactor(w));
-    }
-    if (
-      effect.op === "discardDefenderSpecialEnergyBonus" &&
-      defender?.energy.some((card) => isEnergy(card.def) && !card.def.isBasic)
-    ) damage += effect.bonus;
-  }
-  if (!defender || damage <= 0) return damage;
-  const ignoresBoth = attack.effects?.some(
-    (effect) => effect.op === "damage" && effect.applyWR === false &&
-      (effect.target === "defending" || effect.target === "anyOpponentChoice")
-  ) ?? false;
-  if (!ignoresBoth && defender.def.weakness && attacker.def.types.includes(defender.def.weakness))
-    damage *= 2;
-  if (
-    !ignoresBoth && !attack.ignoreResistance &&
-    resistancesOf(defender.def).some((resistance) => attacker.def.types.includes(resistance))
-  ) damage = Math.max(0, damage - 30);
-  return damage;
+  const base = intrinsicAttackValue(attack, pokemon);
+  return base * (0.85 + 0.15 * w.disruption);
 }
 
 function typedUnmetSymbols(game: Game, cost: EnergyType[], holder: PokemonInPlay, owner: number): number {
@@ -176,10 +88,11 @@ function attachEnergyScore(game: Game, card: CardInstance, target: PokemonInPlay
   const primaryBonus = targetBattleValue >= bestBattleValue - 1 ? 24 : 0;
   const focusBonus = Math.min(21, target.energy.length * 7);
   const bonus = (active ? 28 : 0) + primaryBonus + focusBonus;
-  if (enabledDamage > 0) return 80 + Math.min(45, enabledDamage * 0.55) + bonus;
-  if (progressedDamage > 0) return 52 + Math.min(34, progressedDamage * 0.4) + bonus;
+  const modifierValue = attachedCardTacticalValue(card, target);
+  if (enabledDamage > 0) return 80 + Math.min(45, enabledDamage * 0.55) + bonus + modifierValue;
+  if (progressedDamage > 0) return 52 + Math.min(34, progressedDamage * 0.4) + bonus + modifierValue;
   if (!needsAny) return 18;
-  return 14;
+  return 14 + modifierValue;
 }
 
 function energyProgressScore(game: Game, pokemon: PokemonInPlay, p: number, w: StrategyWeights): number {
@@ -197,10 +110,11 @@ function energyProgressScore(game: Game, pokemon: PokemonInPlay, p: number, w: S
 }
 
 function bestAffordableDamage(game: Game, attacker: PokemonInPlay, owner: number, defender: PokemonInPlay | null, w: StrategyWeights): number {
+  void w;
   let best = 0;
   for (const attack of attacker.def.attacks) {
     if (!game.canPayCost(attack.cost, attacker, owner)) continue;
-    best = Math.max(best, expectedAttackDamage(game, attack, attacker, owner, defender, w));
+    best = Math.max(best, projectAttackDamage(game, attack, attacker, owner, defender));
   }
   return best;
 }
@@ -263,10 +177,11 @@ export function evaluatePosition(game: Game, p: number, w: StrategyWeights): num
   score += sideScore(game, p, w) - sideScore(game, 1 - p, w) * (0.7 + 0.3 * w.disruption);
   if (opp.active) {
     score += conditionScore(opp.active) * w.disruption;
-    score += (opp.active.damage / opp.active.def.hp) * 220 * w.aggression;
+    const oppHp = game.effectiveHp({ p: 1 - p, slot: "active" }, opp.active);
+    score += (opp.active.damage / oppHp) * 220 * w.aggression;
     if (me.active) {
       const punch = bestAffordableDamage(game, me.active, p, opp.active, w);
-      const oppHpLeft = Math.max(1, opp.active.def.hp - opp.active.damage);
+      const oppHpLeft = Math.max(1, oppHp - opp.active.damage);
       if (punch >= oppHpLeft) score += (opp.active.def.isEx ? 420 : 280) * w.aggression;
     }
   }
@@ -274,7 +189,7 @@ export function evaluatePosition(game: Game, p: number, w: StrategyWeights): num
     score -= conditionScore(me.active) * w.defense;
     if (opp.active) {
       const threat = bestAffordableDamage(game, opp.active, 1 - p, me.active, w);
-      const hpLeft = me.active.def.hp - me.active.damage;
+      const hpLeft = game.effectiveHp({ p, slot: "active" }, me.active) - me.active.damage;
       if (threat >= hpLeft) score -= (me.active.def.isEx ? 700 : 400) * w.defense;
     }
   }
@@ -287,7 +202,7 @@ function retreatRolloutScore(game: Game, benchIndex: number, w: StrategyWeights)
   const target = me.bench[benchIndex];
   const opp = game.players[1 - game.current].active;
   if (!active || !target || !opp) return -100;
-  const hpLeft = active.def.hp - active.damage;
+  const hpLeft = game.effectiveHp({ p: game.current, slot: "active" }, active) - active.damage;
   const threat = bestAffordableDamage(game, opp, 1 - game.current, active, w);
   const doomed = threat >= hpLeft;
   const activeDamage = bestAffordableDamage(game, active, game.current, opp, w);
@@ -317,7 +232,14 @@ export function heuristicActionScore(game: Game, action: Action, w: StrategyWeig
           : -100;
       }
     case "playBasic":
-      return me.bench.length < 4 ? 78 + 8 * w.setup : 55;
+      {
+        const card = me.hand.find((candidate) => candidate.uid === action.handUid);
+        const duplicate = card && me.bench.some((pokemon) => pokemon.def.name === card.def.name);
+        if (me.bench.length === 0) return 96 + 8 * w.setup;
+        if (me.bench.length >= 4) return duplicate ? 5 : 24;
+        if (me.bench.length >= 3) return duplicate ? 18 : 46;
+        return (duplicate ? 48 : 72) + 8 * w.setup;
+      }
     case "evolve":
       return 76 + 8 * w.setup;
     case "attachEnergy": {
@@ -339,9 +261,11 @@ export function heuristicActionScore(game: Game, action: Action, w: StrategyWeig
       const attack = me.active?.def.attacks[action.index];
       const oppActive = game.players[1 - game.current].active;
       const dmg = attack && me.active
-        ? expectedAttackDamage(game, attack, me.active, game.current, oppActive, w)
+        ? projectAttackDamage(game, attack, me.active, game.current, oppActive)
         : 0;
-      const hpLeft = oppActive ? Math.max(0, oppActive.def.hp - oppActive.damage) : 999;
+      const hpLeft = oppActive
+        ? Math.max(0, game.effectiveHp({ p: 1 - game.current, slot: "active" }, oppActive) - oppActive.damage)
+        : 999;
       const koBonus = dmg >= hpLeft ? 120 : 0;
       return 82 + dmg * 0.35 * (0.7 + 0.3 * w.aggression) + koBonus;
     }

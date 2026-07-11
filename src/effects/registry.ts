@@ -9,9 +9,24 @@ export interface EffectHandler<E extends Effect = Effect> {
 }
 
 const registry = new Map<string, EffectHandler>();
+const commandRegistry = new Map<string, (payload: unknown, ctx: EffectContext) => void>();
 
 export function defineEffect<E extends Effect>(handler: EffectHandler<E>): void {
   registry.set(handler.op, handler as EffectHandler);
+}
+
+export function defineEffectCommand<P>(
+  command: string,
+  run: (payload: P, ctx: EffectContext) => void
+): void {
+  if (commandRegistry.has(command)) throw new Error(`Duplicate effect command: "${command}"`);
+  commandRegistry.set(command, run as (payload: unknown, ctx: EffectContext) => void);
+}
+
+export function runEffectCommand(command: string, payload: unknown, ctx: EffectContext): void {
+  const run = commandRegistry.get(command);
+  if (!run) throw new Error(`No effect command registered for: "${command}"`);
+  run(payload, ctx);
 }
 
 export function runEffect(effect: Effect, ctx: EffectContext): void {
@@ -30,4 +45,11 @@ export function effectAiValue(effect: Effect, ctx: EffectContext): number {
   const handler = registry.get(effect.op);
   if (!handler?.aiValue) return 0;
   return handler.aiValue(effect, ctx);
+}
+
+export function effectRegistryCoverage(): Array<{ op: string; hasAiValue: boolean }> {
+  return [...registry.values()].map((handler) => ({
+    op: handler.op,
+    hasAiValue: !!handler.aiValue,
+  }));
 }

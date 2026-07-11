@@ -2,8 +2,8 @@ import { isEnergy } from "../../model/cards";
 import type { EnergyCardDef, PokemonCardDef } from "../../model/cards";
 import type { Effect } from "../../model/effects";
 import type { ChoiceOption, EffectContext } from "../context";
-import { defineEffect } from "../registry";
-import { pokemonBattleScore } from "../../ai/choiceScoring";
+import { defineEffect, defineEffectCommand } from "../registry";
+import { gustChoiceScore, pokemonBattleScore, scoopUpChoiceScore } from "../../ai/choiceScoring";
 
 defineEffect<{ op: "switchSelf"; optional?: boolean }>({
   op: "switchSelf",
@@ -11,21 +11,17 @@ defineEffect<{ op: "switchSelf"; optional?: boolean }>({
     const me = ctx.players[ctx.controller];
     if (me.bench.length === 0 || !me.active) return;
     const options: ChoiceOption[] = me.bench.map((pokemon, i) => ({
-      label: pokemon.def.name,
+      label: ctx.describeSlot({ p: ctx.controller, slot: i }),
+      informationKey: `switch:${pokemon.card.uid}`,
       aiScore: pokemonBattleScore(ctx, pokemon, ctx.controller, true),
-      apply: () => {
-        ctx.swapActive(ctx.controller, i);
-        ctx.log(`${me.name} switches to ${pokemon.def.name}`, "switch", {
-          player: ctx.controller,
-          uid: pokemon.card.uid,
-        });
-      },
+      operation: { kind: "system", operation: { op: "switchPokemon", player: ctx.controller, pokemonUid: pokemon.card.uid } },
     }));
     if (e.optional) {
       options.push({
         label: "Don't switch",
+        informationKey: "do-not-switch",
         aiScore: pokemonBattleScore(ctx, me.active, ctx.controller, true) + 12,
-        apply: () => {},
+        operation: ctx.command("board.noop", {}),
       });
     }
     ctx.requestChoice(ctx.controller, "Switch to which Pokemon?", options);
@@ -53,15 +49,10 @@ defineEffect<{ op: "gustOpponent" }>({
       ctx.controller,
       "Bring which Pokemon to the Active spot?",
       opp.bench.map((pokemon, i) => ({
-        label: pokemon.def.name,
-        aiScore: pokemon.damage,
-        apply: () => {
-          ctx.swapActive(ctx.opponent, i);
-          ctx.log(`${pokemon.def.name} is dragged to the Active spot`, "switch", {
-            player: ctx.opponent,
-            uid: pokemon.card.uid,
-          });
-        },
+        label: ctx.describeSlot({ p: ctx.opponent, slot: i }),
+        informationKey: `gust:${pokemon.card.uid}`,
+        aiScore: gustChoiceScore(ctx, pokemon, ctx.opponent),
+        operation: { kind: "system", operation: { op: "switchPokemon", player: ctx.opponent, pokemonUid: pokemon.card.uid } },
       }))
     );
   },
@@ -90,15 +81,9 @@ defineEffect<{ op: "scoopUp" }>({
       "Return which Pokemon to your hand?",
       candidates.map(({ ref, pokemon }) => ({
         label: `${ctx.describeSlot(ref)} — ${pokemon.damage} damage`,
-        aiScore: pokemon.damage - (ref.slot === "active" ? 20 : 0),
-        apply: () => {
-          const player = ctx.players[ctx.controller];
-          player.hand.push(pokemon.card, ...pokemon.underneath, ...pokemon.energy);
-          if (pokemon.tool) player.hand.push(pokemon.tool);
-          if (player.active === pokemon) player.active = null;
-          player.bench = player.bench.filter((b) => b !== pokemon);
-          ctx.log(`${pokemon.def.name} returns to ${player.name}'s hand`);
-        },
+        informationKey: `scoop:${pokemon.card.uid}`,
+        aiScore: scoopUpChoiceScore(ctx, pokemon, ctx.controller, ref.slot === "active"),
+        operation: ctx.command("board.scoop", { pokemonUid: pokemon.card.uid }),
       }))
     );
   },
@@ -118,33 +103,8 @@ function moveDamageLoop(ctx: EffectContext, count: number): void {
     sources.map(({ ref, pokemon }) => ({
       label: `${ctx.players[ref.p].name}'s ${ctx.describeSlot(ref)} — ${pokemon.damage} damage`,
       aiScore: ref.p === ctx.controller ? pokemon.damage : 0,
-      apply: () => {
-        ctx.queueThunk(() => {
-          const targets = [...ctx.allInPlay(0), ...ctx.allInPlay(1)].filter(
-            (entry) => entry.pokemon !== pokemon
-          );
-          if (targets.length === 0) return;
-          ctx.requestChoice(
-            ctx.controller,
-            "Move it to which Pokemon?",
-            targets.map((entry) => ({
-              label: `${ctx.players[entry.ref.p].name}'s ${ctx.describeSlot(entry.ref)}`,
-              aiScore:
-                entry.ref.p !== ctx.controller
-                  ? entry.pokemon.damage + 10
-                  : -entry.pokemon.damage,
-              apply: () => {
-                pokemon.damage -= 10;
-                entry.pokemon.damage += 10;
-                ctx.log(
-                  `A damage counter moves from ${pokemon.def.name} to ${entry.pokemon.def.name}`
-                );
-                ctx.queueThunk(() => moveDamageLoop(ctx, count - 1));
-              },
-            }))
-          );
-        });
-      },
+      informationKey: `damage-source:${pokemon.card.uid}`,
+      operation: ctx.command("board.chooseDamageTarget", { sourceUid: pokemon.card.uid, count }),
     }))
   );
 }
@@ -171,6 +131,7 @@ defineEffect<{ op: "devolveDefending" }>({
     target.locks = {};
     target.evolvedTurn = null;
     ctx.players[ctx.opponent].hand.push(removed);
+    ctx.revealInHand(ctx.opponent, removed);
     ctx.log(`${removed.def.name} devolves into ${target.def.name}`);
     const invalid = target.energy.filter(
       (e) => isEnergy(e.def) && (e.def as EnergyCardDef).attachRequiresEvolved
@@ -194,17 +155,9 @@ defineEffect<{ op: "rareCandy" }>({
       "Evolve which Pokemon?",
       pairs.map(({ ref, pokemon, stage2 }) => ({
         label: `${ctx.describeSlot(ref)} → ${stage2.def.name}`,
+        informationKey: `rare-candy:${pokemon.card.uid}:${stage2.def.id}`,
         aiScore: (stage2.def as PokemonCardDef).hp,
-        apply: () => {
-          const player = ctx.players[ctx.controller];
-          const index = player.hand.findIndex((c) => c.uid === stage2.uid);
-          if (index === -1) return;
-          const card = player.hand.splice(index, 1)[0];
-          ctx.evolvePokemon(pokemon, card);
-          ctx.log(
-            `Rare Candy: ${pokemon.underneath[pokemon.underneath.length - 1].def.name} becomes ${card.def.name}`
-          );
-        },
+        operation: ctx.command("board.rareCandy", { pokemonUid: pokemon.card.uid, stage2Uid: stage2.uid }),
       }))
     );
   },
@@ -245,3 +198,80 @@ defineEffect<{ op: "flip"; heads: Effect[]; tails: Effect[] }>({
     return val;
   },
 });
+
+defineEffectCommand("board.noop", () => {});
+
+defineEffectCommand<{ pokemonUid: number }>("board.scoop", (payload, ctx) => {
+  const entry = ctx.allInPlay(ctx.controller).find(({ pokemon }) => pokemon.card.uid === payload.pokemonUid);
+  if (!entry) return;
+  const player = ctx.players[ctx.controller];
+  const pokemon = entry.pokemon;
+  player.hand.push(pokemon.card, ...pokemon.underneath, ...pokemon.energy);
+  if (pokemon.tool) player.hand.push(pokemon.tool);
+  for (const card of [
+    pokemon.card,
+    ...pokemon.underneath,
+    ...pokemon.energy,
+    ...(pokemon.tool ? [pokemon.tool] : []),
+  ]) ctx.revealInHand(ctx.controller, card);
+  if (player.active === pokemon) player.active = null;
+  player.bench = player.bench.filter((candidate) => candidate !== pokemon);
+  ctx.log(`${pokemon.def.name} returns to ${player.name}'s hand`);
+});
+
+defineEffectCommand<{ sourceUid: number; count: number }>(
+  "board.chooseDamageTarget",
+  (payload, ctx) => {
+    const source = [...ctx.allInPlay(0), ...ctx.allInPlay(1)]
+      .find(({ pokemon }) => pokemon.card.uid === payload.sourceUid);
+    if (!source || source.pokemon.damage <= 0) return;
+    const targets = [...ctx.allInPlay(0), ...ctx.allInPlay(1)]
+      .filter(({ pokemon }) => pokemon.card.uid !== payload.sourceUid);
+    if (targets.length === 0) return;
+    ctx.requestChoice(
+      ctx.controller,
+      "Move it to which Pokemon?",
+      targets.map((entry) => ({
+        label: `${ctx.players[entry.ref.p].name}'s ${ctx.describeSlot(entry.ref)}`,
+        informationKey: `damage-target:${entry.pokemon.card.uid}`,
+        aiScore: entry.ref.p !== ctx.controller ? entry.pokemon.damage + 10 : -entry.pokemon.damage,
+        operation: ctx.command("board.moveDamage", {
+          sourceUid: payload.sourceUid,
+          targetUid: entry.pokemon.card.uid,
+          count: payload.count,
+        }),
+      }))
+    );
+  }
+);
+
+defineEffectCommand<{ sourceUid: number; targetUid: number; count: number }>(
+  "board.moveDamage",
+  (payload, ctx) => {
+    const entries = [...ctx.allInPlay(0), ...ctx.allInPlay(1)];
+    const source = entries.find(({ pokemon }) => pokemon.card.uid === payload.sourceUid)?.pokemon;
+    const target = entries.find(({ pokemon }) => pokemon.card.uid === payload.targetUid)?.pokemon;
+    if (!source || !target || source.damage <= 0) return;
+    source.damage -= 10;
+    target.damage += 10;
+    ctx.log(`A damage counter moves from ${source.def.name} to ${target.def.name}`);
+    moveDamageLoop(ctx, payload.count - 1);
+  }
+);
+
+defineEffectCommand<{ pokemonUid: number; stage2Uid: number }>(
+  "board.rareCandy",
+  (payload, ctx) => {
+    const player = ctx.players[ctx.controller];
+    const pokemon = ctx.allInPlay(ctx.controller)
+      .find((entry) => entry.pokemon.card.uid === payload.pokemonUid)?.pokemon;
+    const index = player.hand.findIndex((card) => card.uid === payload.stage2Uid);
+    if (!pokemon || index === -1) return;
+    const card = player.hand.splice(index, 1)[0];
+    ctx.forgetKnownCard(card.uid);
+    ctx.evolvePokemon(pokemon, card);
+    ctx.log(
+      `Rare Candy: ${pokemon.underneath[pokemon.underneath.length - 1].def.name} becomes ${card.def.name}`
+    );
+  }
+);

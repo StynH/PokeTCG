@@ -3,6 +3,7 @@ import type { Effect, CardFilter, EffectTarget } from "../model/effects";
 import type { EnergyType } from "../model/energy";
 import type { PlayerState, PokemonInPlay, SlotRef } from "../core/state";
 import type { ChoiceOption } from "../core/choice";
+import type { EffectFrame, QueuedOperation } from "../core/operations";
 import type { EventCat } from "../core/events";
 
 export type { ChoiceOption };
@@ -13,6 +14,7 @@ export interface EffectContext {
   attackerTypes?: EnergyType[];
   fromAttack?: boolean;
   sourceRef?: SlotRef;
+  frame: EffectFrame;
 
   players: [PlayerState, PlayerState];
   turnNumber: number;
@@ -20,13 +22,14 @@ export interface EffectContext {
   getPokemon(ref: SlotRef): PokemonInPlay | null;
   allInPlay(p: number): Array<{ ref: SlotRef; pokemon: PokemonInPlay }>;
   describeSlot(ref: SlotRef): string;
-  forEachTarget(target: EffectTarget, prompt: string, fn: (ref: SlotRef) => void): void;
+  targetRefs(target: EffectTarget): SlotRef[];
 
   energyUnits(
     card: CardInstance,
     holder: PokemonInPlay,
     ownerIndex: number
   ): { provides: EnergyType[]; count: number };
+  effectiveHp(ref: SlotRef, pokemon: PokemonInPlay): number;
   conditionsPrevented(ref: SlotRef): boolean;
   matchesFilter(def: CardDef, filter: CardFilter): boolean;
   rareCandyPairs(
@@ -38,6 +41,9 @@ export interface EffectContext {
   ): boolean;
 
   drawCards(p: number, count: number): void;
+  revealInHand(owner: number, card: CardInstance): void;
+  forgetHand(owner: number): void;
+  forgetKnownCard(uid: number): void;
   shuffleDeck(p: number): void;
   swapActive(p: number, benchIndex: number): void;
   evolvePokemon(pokemon: PokemonInPlay, card: CardInstance): void;
@@ -51,6 +57,7 @@ export interface EffectContext {
     ignoreDefenderEffects?: boolean
   ): void;
   addAttackDamage(amount: number, ignoreResistance?: boolean): boolean;
+  currentAttackDamage(): number;
 
   log(
     msg: string,
@@ -63,5 +70,6 @@ export interface EffectContext {
   queueSwitchChoice(p: number): void;
 
   queueEffects(effects: Effect[]): void;
-  queueThunk(fn: () => void): void;
+  queueOperation(operation: QueuedOperation): void;
+  command(name: string, payload: unknown): QueuedOperation;
 }

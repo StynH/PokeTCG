@@ -1,8 +1,11 @@
+import type { QueuedOperation } from "./operations";
+
 export interface ChoiceOption {
   id?: string;
+  informationKey?: string;
   label: string;
   aiScore: number;
-  apply: () => void;
+  operation: QueuedOperation;
 }
 
 export interface PendingChoice {

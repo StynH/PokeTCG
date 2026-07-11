@@ -11,6 +11,7 @@
     "test:rules": "esbuild scripts/rules-regression.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/rules-regression.cjs && node node_modules/.cache/rules-regression.cjs",
     "test:ai": "esbuild scripts/ai-regression.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/ai-regression.cjs && node node_modules/.cache/ai-regression.cjs",
     "benchmark:ai": "esbuild scripts/benchmark-ai.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/benchmark-ai.cjs && node node_modules/.cache/benchmark-ai.cjs",
+    "benchmark:ai:release": "npm run benchmark:ai -- 20 512 7 mirror --output=benchmark-results/ai-latest.json",
     "test:cards": "esbuild tests/index.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/card-tests.cjs && node node_modules/.cache/card-tests.cjs"
   },
   "devDependencies": {
