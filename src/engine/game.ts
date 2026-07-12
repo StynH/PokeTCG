@@ -383,7 +383,7 @@ export class Game {
           }
         }
       } else if (isTrainer(def)) {
-        if (def.kind === "Supporter" && me.supporterTurn === this.turnNumber) continue;
+        if (def.kind === "Supporter" && (me.supporterTurn === this.turnNumber || this.supportersBlockedByOpponent())) continue;
         if (!this.trainerRestrictionOk(def)) continue;
         if (def.kind === "Stadium") {
           if (this.stadium?.card.def.name !== def.name && !this.stadiumsBlockedByOpponent())
@@ -789,6 +789,14 @@ export class Game {
     );
   }
 
+  private supportersBlockedByOpponent(): boolean {
+    const oppActive = this.players[1 - this.current].active;
+    return (
+      oppActive?.def.power?.kind === "Poke-Body" &&
+      !!oppActive.def.power.modifiers?.some((m) => m.kind === "blockOpponentSupporter")
+    );
+  }
+
   private trainerRestrictionOk(def: TrainerCardDef): boolean {
     const restriction = def.restriction;
     if (!restriction) return true;
@@ -1018,7 +1026,8 @@ export class Game {
         ? this.getPokemon({ p: context.controller, slot: "active" })
         : null;
       const attackerIsBasic = attacker?.def.stage === "Basic";
-      const reduction = damageMinusSum(this.players, ref, this.stadium, attackerIsBasic);
+      const attackerIsEx = attacker?.def.isEx ?? false;
+      const reduction = damageMinusSum(this.players, ref, this.stadium, attackerIsBasic, attackerIsEx);
       if (reduction > 0 && amount > 0) amount = Math.max(0, amount - reduction);
     }
     if (amount > 0) {
@@ -1027,6 +1036,13 @@ export class Game {
         uid: target.card.uid,
         amount,
       });
+      if (context.fromAttack && ref.slot === "active" && ref.p !== context.controller) {
+        const power = target.def.power;
+        if (power?.kind === "Poke-Body" && power.trigger === "onDamagedByAttack" && power.effects?.length) {
+          this.addLog(`${power.name} triggers!`, "power", { player: ref.p, uid: target.card.uid });
+          this.queueEffectsFor(power.effects, ref.p, undefined, false, { p: ref.p, slot: "active" });
+        }
+      }
     } else if (base > 0) {
       this.addLog(`${target.def.name} takes no damage`, "damage", {
         uid: target.card.uid,

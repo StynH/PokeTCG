@@ -179,7 +179,7 @@ defineEffect<{ op: "discardOpponentEnergy"; count: number; target?: "active" | "
 defineEffect<{
   op: "attachEnergyFromDiscard";
   energyType: EnergyType;
-  target: "selfBenchChoice" | "anySelfChoice";
+  target: "selfBenchChoice" | "anySelfChoice" | "self";
 }>({
   op: "attachEnergyFromDiscard",
   run: (e, ctx) => {
@@ -188,10 +188,15 @@ defineEffect<{
       (c) => isEnergy(c.def) && c.def.provides.includes(e.energyType)
     );
     if (energyIndex === -1) return;
+    const source = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : me.active;
     const candidates: { ref: SlotRef; pokemon: import("../../core/state").PokemonInPlay }[] =
-      e.target === "selfBenchChoice"
-        ? me.bench.map((pokemon, i) => ({ ref: { p: ctx.controller, slot: i } as SlotRef, pokemon }))
-        : ctx.allInPlay(ctx.controller);
+      e.target === "self"
+        ? source
+          ? [{ ref: ctx.sourceRef ?? { p: ctx.controller, slot: "active" }, pokemon: source }]
+          : []
+        : e.target === "selfBenchChoice"
+          ? me.bench.map((pokemon, i) => ({ ref: { p: ctx.controller, slot: i } as SlotRef, pokemon }))
+          : ctx.allInPlay(ctx.controller);
     if (candidates.length === 0) return;
     const energy = me.discard[energyIndex];
     const options: ChoiceOption[] = candidates.map(({ ref, pokemon }) => ({

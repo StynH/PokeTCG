@@ -44,26 +44,25 @@ defineEffect<{ op: "switchSelf"; optional?: boolean }>({
   },
 });
 
-defineEffect<{ op: "gustOpponent" }>({
+defineEffect<{ op: "gustOpponent"; optional?: boolean; thenIfSwitched?: Effect[] }>({
   op: "gustOpponent",
-  run: (_e, ctx) => {
+  run: (e, ctx) => {
     const opp = ctx.players[ctx.opponent];
     if (opp.bench.length === 0 || !opp.active) return;
-    ctx.requestChoice(
-      ctx.controller,
-      "Bring which Pokemon to the Active spot?",
-      opp.bench.map((pokemon, i) => ({
-        label: pokemon.def.name,
-        aiScore: pokemon.damage,
-        apply: () => {
-          ctx.swapActive(ctx.opponent, i);
-          ctx.log(`${pokemon.def.name} is dragged to the Active spot`, "switch", {
-            player: ctx.opponent,
-            uid: pokemon.card.uid,
-          });
-        },
-      }))
-    );
+    const options: ChoiceOption[] = opp.bench.map((pokemon, i) => ({
+      label: pokemon.def.name,
+      aiScore: pokemon.damage,
+      apply: () => {
+        ctx.swapActive(ctx.opponent, i);
+        ctx.log(`${pokemon.def.name} is dragged to the Active spot`, "switch", {
+          player: ctx.opponent,
+          uid: pokemon.card.uid,
+        });
+        if (e.thenIfSwitched?.length) ctx.queueEffects(e.thenIfSwitched);
+      },
+    }));
+    if (e.optional) options.push({ label: "Don't switch", aiScore: -1, apply: () => {} });
+    ctx.requestChoice(ctx.controller, "Bring which Pokemon to the Active spot?", options);
   },
   canApply: (_e, ctx) => ctx.players[ctx.opponent].bench.length > 0,
   aiValue: () => 30,
