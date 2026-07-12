@@ -4,7 +4,7 @@ import type { EnergyType } from "../../model/energy";
 import type { SlotRef } from "../../core/state";
 import type { ChoiceOption } from "../../core/choice";
 import type { EffectContext } from "../context";
-import { defineEffect } from "../registry";
+import { defineEffect, defineEffectCommand } from "../registry";
 import {
   energyAttachmentChoiceScore,
   energyMoveValue,
@@ -32,35 +32,11 @@ function moveEnergyLoop(
       const card = pokemon.energy.find(matches)!;
       return {
         label: ctx.describeSlot(ref),
+        informationKey: `energy-source:${pokemon.card.uid}`,
         aiScore: energyRemovalChoiceScore(ctx, pokemon, p, card, ref.slot === "active"),
-        apply: () => {
-          ctx.queueThunk(() => {
-            const targets = ctx.allInPlay(p).filter((entry) => entry.pokemon !== pokemon);
-            if (targets.length === 0) return;
-            ctx.requestChoice(
-              p,
-              "Move Energy to which Pokemon?",
-              targets.map((entry) => ({
-                label: ctx.describeSlot(entry.ref),
-                aiScore: energyAttachmentChoiceScore(
-                  ctx,
-                  card,
-                  entry.pokemon,
-                  p,
-                  entry.ref.slot === "active"
-                ),
-                apply: () => {
-                  const index = pokemon.energy.findIndex(matches);
-                  if (index === -1) return;
-                  const moved = pokemon.energy.splice(index, 1)[0];
-                  entry.pokemon.energy.push(moved);
-                  ctx.log(`${moved.def.name} moves from ${pokemon.def.name} to ${entry.pokemon.def.name}`);
-                  ctx.queueThunk(() => moveEnergyLoop(ctx, energyType, count - 1, basicOnly));
-                },
-              }))
-            );
-          });
-        },
+        operation: ctx.command("energy.chooseMoveTarget", {
+          sourceUid: pokemon.card.uid, energyType, count, basicOnly,
+        }),
       };
     })
   );
@@ -122,13 +98,11 @@ function discardOppEnergyLoop(ctx: EffectContext, count: number): void {
     "Discard which Energy from the Defending Pokemon?",
     defender.energy.map((card) => ({
       label: card.def.name,
-      aiScore: ctx.energyUnits(card, defender, ctx.opponent).count * 10,
-      apply: () => {
-        const index = defender.energy.findIndex((c) => c.uid === card.uid);
-        if (index !== -1) ctx.players[ctx.opponent].discard.push(defender.energy.splice(index, 1)[0]);
-        ctx.log(`${defender.def.name} loses ${card.def.name}`);
-        ctx.queueThunk(() => discardOppEnergyLoop(ctx, count - 1));
-      },
+      informationKey: `discard-energy:${card.def.id}`,
+      aiScore: energyRemovalChoiceScore(ctx, defender, ctx.opponent, card, true) * -1,
+      operation: ctx.command("energy.discardOpponent", {
+        targetUid: defender.card.uid, cardUid: card.uid, count, any: false,
+      }),
     }))
   );
 }
@@ -142,25 +116,9 @@ function discardOppEnergyAnyLoop(ctx: EffectContext, count: number): void {
     "Choose opponent's Pokémon to discard Energy from:",
     targets.map(({ ref, pokemon }) => ({
       label: ctx.describeSlot(ref),
+      informationKey: `discard-target:${pokemon.card.uid}`,
       aiScore: pokemon.energy.reduce((s, c) => s + ctx.energyUnits(c, pokemon, ctx.opponent).count * 10, 0),
-      apply: () => {
-        ctx.queueThunk(() => {
-          ctx.requestChoice(
-            ctx.controller,
-            "Discard which Energy?",
-            pokemon.energy.map((card) => ({
-              label: card.def.name,
-              aiScore: ctx.energyUnits(card, pokemon, ctx.opponent).count * 10,
-              apply: () => {
-                const idx = pokemon.energy.findIndex((c) => c.uid === card.uid);
-                if (idx !== -1) ctx.players[ctx.opponent].discard.push(pokemon.energy.splice(idx, 1)[0]);
-                ctx.log(`${pokemon.def.name} loses ${card.def.name}`);
-                ctx.queueThunk(() => discardOppEnergyAnyLoop(ctx, count - 1));
-              },
-            }))
-          );
-        });
-      },
+      operation: ctx.command("energy.chooseOpponentEnergy", { targetUid: pokemon.card.uid, count }),
     }))
   );
 }
@@ -201,17 +159,13 @@ defineEffect<{
     const energy = me.discard[energyIndex];
     const options: ChoiceOption[] = candidates.map(({ ref, pokemon }) => ({
       label: ctx.describeSlot(ref),
+      informationKey: `attach:${pokemon.card.uid}`,
       aiScore: energyAttachmentChoiceScore(ctx, energy, pokemon, ctx.controller, ref.slot === "active"),
-      apply: () => {
-        const card = me.discard.splice(
-          me.discard.findIndex((c) => isEnergy(c.def) && c.def.provides.includes(e.energyType)),
-          1
-        )[0];
-        pokemon.energy.push(card);
-        ctx.log(`${card.def.name} attached to ${pokemon.def.name} from the discard pile`);
-      },
+      operation: ctx.command("energy.attachFromDiscard", {
+        energyType: e.energyType, targetUid: pokemon.card.uid,
+      }),
     }));
-    if (options.length === 1) { options[0].apply(); return; }
+    if (options.length === 1) { ctx.queueOperation(options[0].operation); return; }
     ctx.requestChoice(ctx.controller, `Attach ${e.energyType} Energy to which Pokemon?`, options);
   },
   canApply: (e, ctx) => {
@@ -248,8 +202,11 @@ defineEffect<{ op: "attachEnergyFromDeck"; energyType: EnergyType; basicOnly?: b
         const energy = me.deck.find(matches)!;
         return {
           label: ctx.describeSlot(ref),
+          informationKey: `attach:${pokemon.card.uid}`,
           aiScore: energyAttachmentChoiceScore(ctx, energy, pokemon, ctx.controller, ref.slot === "active"),
-          apply: () => attach(pokemon),
+          operation: ctx.command("energy.attachFromDeck", {
+            energyType: e.energyType, basicOnly: e.basicOnly, targetUid: pokemon.card.uid,
+          }),
         };
       })
     );
@@ -282,6 +239,7 @@ defineEffect<{ op: "attachEnergyFromHand"; energyType?: EnergyType; target: "any
     const label = e.energyType ? `${e.energyType} Energy` : "a basic Energy";
     const attach = (pokemon: import("../../core/state").PokemonInPlay) => {
       const card = me.hand.splice(me.hand.findIndex(matches), 1)[0];
+      ctx.forgetKnownCard(card.uid);
       pokemon.energy.push(card);
       ctx.log(`${card.def.name} attached to ${pokemon.def.name} from hand`);
     };
@@ -289,8 +247,11 @@ defineEffect<{ op: "attachEnergyFromHand"; energyType?: EnergyType; target: "any
     const energy = me.hand.find(matches)!;
     const options: ChoiceOption[] = candidates.map(({ ref, pokemon }) => ({
       label: ctx.describeSlot(ref),
+      informationKey: `attach:${pokemon.card.uid}`,
       aiScore: energyAttachmentChoiceScore(ctx, energy, pokemon, ctx.controller, ref.slot === "active"),
-      apply: () => attach(pokemon),
+      operation: ctx.command("energy.attachFromHand", {
+        energyType: e.energyType, targetUid: pokemon.card.uid,
+      }),
     }));
     ctx.requestChoice(ctx.controller, `Attach ${label} to which Pokemon?`, options);
   },
@@ -300,3 +261,154 @@ defineEffect<{ op: "attachEnergyFromHand"; energyType?: EnergyType; target: "any
     ),
   aiValue: () => 30,
 });
+
+defineEffectCommand<{
+  sourceUid: number;
+  energyType?: EnergyType;
+  count: number;
+  basicOnly?: boolean;
+}>("energy.chooseMoveTarget", (payload, ctx) => {
+  const source = ctx.allInPlay(ctx.controller)
+    .find(({ pokemon }) => pokemon.card.uid === payload.sourceUid)?.pokemon;
+  if (!source) return;
+  const matches = (card: CardInstance) =>
+    isEnergy(card.def) &&
+    (!payload.energyType || card.def.provides.includes(payload.energyType)) &&
+    (!payload.basicOnly || card.def.isBasic);
+  const card = source.energy.find(matches);
+  if (!card) return;
+  const targets = ctx.allInPlay(ctx.controller).filter(({ pokemon }) => pokemon !== source);
+  if (targets.length === 0) return;
+  ctx.requestChoice(
+    ctx.controller,
+    "Move Energy to which Pokemon?",
+    targets.map((entry) => ({
+      label: ctx.describeSlot(entry.ref),
+      informationKey: `energy-target:${entry.pokemon.card.uid}`,
+      aiScore: energyAttachmentChoiceScore(
+        ctx, card, entry.pokemon, ctx.controller, entry.ref.slot === "active"
+      ),
+      operation: ctx.command("energy.move", {
+        sourceUid: payload.sourceUid,
+        targetUid: entry.pokemon.card.uid,
+        cardUid: card.uid,
+        energyType: payload.energyType,
+        count: payload.count,
+        basicOnly: payload.basicOnly,
+      }),
+    }))
+  );
+});
+
+defineEffectCommand<{
+  sourceUid: number;
+  targetUid: number;
+  cardUid: number;
+  energyType?: EnergyType;
+  count: number;
+  basicOnly?: boolean;
+}>("energy.move", (payload, ctx) => {
+  const entries = ctx.allInPlay(ctx.controller);
+  const source = entries.find(({ pokemon }) => pokemon.card.uid === payload.sourceUid)?.pokemon;
+  const target = entries.find(({ pokemon }) => pokemon.card.uid === payload.targetUid)?.pokemon;
+  if (!source || !target) return;
+  const index = source.energy.findIndex((card) => card.uid === payload.cardUid);
+  if (index === -1) return;
+  const moved = source.energy.splice(index, 1)[0];
+  target.energy.push(moved);
+  ctx.log(`${moved.def.name} moves from ${source.def.name} to ${target.def.name}`);
+  moveEnergyLoop(ctx, payload.energyType, payload.count - 1, payload.basicOnly);
+});
+
+defineEffectCommand<{ targetUid: number; count: number }>(
+  "energy.chooseOpponentEnergy",
+  (payload, ctx) => {
+    const target = ctx.allInPlay(ctx.opponent)
+      .find(({ pokemon }) => pokemon.card.uid === payload.targetUid)?.pokemon;
+    if (!target || target.energy.length === 0) return;
+    ctx.requestChoice(
+      ctx.controller,
+      "Discard which Energy?",
+      target.energy.map((card) => ({
+        label: card.def.name,
+        informationKey: `discard-energy:${card.def.id}`,
+        aiScore: -energyRemovalChoiceScore(ctx, target, ctx.opponent, card, target === ctx.players[ctx.opponent].active),
+        operation: ctx.command("energy.discardOpponent", {
+          targetUid: payload.targetUid,
+          cardUid: card.uid,
+          count: payload.count,
+          any: true,
+        }),
+      }))
+    );
+  }
+);
+
+defineEffectCommand<{ targetUid: number; cardUid: number; count: number; any: boolean }>(
+  "energy.discardOpponent",
+  (payload, ctx) => {
+    const target = ctx.allInPlay(ctx.opponent)
+      .find(({ pokemon }) => pokemon.card.uid === payload.targetUid)?.pokemon;
+    if (!target) return;
+    const index = target.energy.findIndex((card) => card.uid === payload.cardUid);
+    if (index === -1) return;
+    const card = target.energy.splice(index, 1)[0];
+    ctx.players[ctx.opponent].discard.push(card);
+    ctx.log(`${target.def.name} loses ${card.def.name}`);
+    if (payload.any) discardOppEnergyAnyLoop(ctx, payload.count - 1);
+    else discardOppEnergyLoop(ctx, payload.count - 1);
+  }
+);
+
+defineEffectCommand<{ energyType: EnergyType; targetUid: number }>(
+  "energy.attachFromDiscard",
+  (payload, ctx) => {
+    const player = ctx.players[ctx.controller];
+    const target = ctx.allInPlay(ctx.controller)
+      .find(({ pokemon }) => pokemon.card.uid === payload.targetUid)?.pokemon;
+    const index = player.discard.findIndex(
+      (card) => isEnergy(card.def) && card.def.provides.includes(payload.energyType)
+    );
+    if (!target || index === -1) return;
+    const card = player.discard.splice(index, 1)[0];
+    target.energy.push(card);
+    ctx.log(`${card.def.name} attached to ${target.def.name} from the discard pile`);
+  }
+);
+
+defineEffectCommand<{
+  energyType: EnergyType;
+  basicOnly?: boolean;
+  targetUid: number;
+}>("energy.attachFromDeck", (payload, ctx) => {
+  const player = ctx.players[ctx.controller];
+  const target = ctx.allInPlay(ctx.controller)
+    .find(({ pokemon }) => pokemon.card.uid === payload.targetUid)?.pokemon;
+  const index = player.deck.findIndex(
+    (card) => isEnergy(card.def) && card.def.provides.includes(payload.energyType) &&
+      (!payload.basicOnly || card.def.isBasic)
+  );
+  if (!target || index === -1) return;
+  const card = player.deck.splice(index, 1)[0];
+  target.energy.push(card);
+  ctx.log(`${card.def.name} attached to ${target.def.name} from the deck`);
+  ctx.shuffleDeck(ctx.controller);
+});
+
+defineEffectCommand<{ energyType?: EnergyType; targetUid: number }>(
+  "energy.attachFromHand",
+  (payload, ctx) => {
+    const player = ctx.players[ctx.controller];
+    const target = ctx.allInPlay(ctx.controller)
+      .find(({ pokemon }) => pokemon.card.uid === payload.targetUid)?.pokemon;
+    const index = player.hand.findIndex(
+      (card) => isEnergy(card.def) &&
+        (payload.energyType ? card.def.provides.includes(payload.energyType) : card.def.isBasic)
+    );
+    if (!target || index === -1) return;
+    const card = player.hand.splice(index, 1)[0];
+    ctx.forgetKnownCard(card.uid);
+    target.energy.push(card);
+    ctx.log(`${card.def.name} attached to ${target.def.name} from hand`);
+  }
+);

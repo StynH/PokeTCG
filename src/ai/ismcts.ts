@@ -38,20 +38,20 @@ interface Node {
 }
 
 function decisionKey(game: Game, decision: Decision): string {
-  if (decision.kind === "choice") {
-    const option = game.pending?.options.find((candidate, index) =>
-      (candidate.id ?? `option:${index}`) === decision.optionId
-    );
-    return JSON.stringify({
-      kind: "choice",
-      prompt: game.pending?.prompt ?? "",
-      label: option?.label ?? decision.optionId,
-    });
-  }
-  const action = decision.action;
-  if (!("handUid" in action)) return JSON.stringify(action);
-  const cardId = game.players[game.current].hand.find((card) => card.uid === action.handUid)?.def.id;
-  return JSON.stringify({ ...action, handUid: cardId ?? action.handUid });
+  const point = game.getDecisionPoint();
+  const optionId = decision.kind === "choice"
+    ? decision.optionId
+    : JSON.stringify(decision.action);
+  const option = point?.options.find((candidate) => candidate.id === optionId);
+  return JSON.stringify({
+    kind: decision.kind,
+    point: point?.id ?? (decision.kind === "choice" ? decision.choiceId : optionId),
+    informationKey: option?.informationKey ?? optionId,
+  });
+}
+
+function decisionCategory(decision: Decision): string {
+  return decision.kind === "choice" ? "choice" : decision.action.type;
 }
 
 function decisionPrior(game: Game, decision: Decision, profile: AIProfile): number {
@@ -72,12 +72,18 @@ function leafValue(game: Game, observer: number, profile: AIProfile): number {
   return Math.max(-1, Math.min(1, base + preference));
 }
 
-function chooseRolloutDecision(game: Game, profile: AIProfile, rng: SeededRng): Decision | null {
+function chooseRolloutDecision(
+  game: Game,
+  observer: number,
+  profile: AIProfile,
+  rng: SeededRng
+): Decision | null {
   const point = game.getDecisionPoint();
   if (!point || point.options.length === 0) return null;
+  const actorProfile = point.actor === observer ? profile : BALANCED;
   const scored = point.options.map((option) => ({
     decision: option.decision,
-    score: decisionPrior(game, option.decision, profile) + rng.next() * 0.025,
+    score: decisionPrior(game, option.decision, actorProfile) + rng.next() * 0.025,
   }));
   if (scored[0].decision.kind === "choice")
     return scored.sort((a, b) => b.score - a.score)[0].decision;
@@ -114,7 +120,7 @@ function rollout(
     decisions++ < config.maxDecisions &&
     game.turnNumber - rootTurn < config.turnHorizon
   ) {
-    const decision = chooseRolloutDecision(game, profile, rng);
+    const decision = chooseRolloutDecision(game, observer, profile, rng);
     if (!decision) break;
     game.applyDecision(decision);
   }
@@ -124,7 +130,7 @@ function rollout(
 function principalVariation(root: Node): string[] {
   const result: string[] = [];
   let node = root;
-  for (let depth = 0; depth < 12; depth++) {
+  for (let depth = 0; depth < 32; depth++) {
     const edge = [...node.edges.values()].sort((a, b) => b.visits - a.visits)[0];
     if (!edge || edge.visits === 0) break;
     result.push(edge.key);
@@ -142,9 +148,11 @@ export function searchDecision(
   const started = performance.now();
   const deadline = started + (config.deadlineMs ?? Infinity);
   const maxIterations = config.maxIterations ?? Infinity;
+  const remainingPrizes = information.snapshot.players
+    .reduce((total, player) => total + player.prizes.length, 0);
   const limits = {
     maxDecisions: config.maxDecisions ?? 200,
-    turnHorizon: config.turnHorizon ?? 5,
+    turnHorizon: config.turnHorizon ?? (remainingPrizes <= 4 ? 7 : 5),
   };
   const root = { visits: 0, edges: new Map<string, Edge>() };
   const seedRng = new SeededRng(config.seed);
@@ -155,24 +163,33 @@ export function searchDecision(
   let guidanceTotal = 0;
 
   for (let world = 0; world < guidanceWorlds && performance.now() < deadline; world++) {
-    const worldSeed = Math.floor(seedRng.next() * 0xffffffff);
-    const game = GameEngine.fromSnapshot(determinize(information, library, worldSeed), library);
-    const action = chooseActionSeeded(
-      game,
-      BALANCED,
-      new SeededRng(worldSeed ^ 0x85ebca6b),
-      2
+    const hiddenSeed = Math.floor(seedRng.next() * 0xffffffff);
+    const chanceSeed = Math.floor(seedRng.next() * 0xffffffff);
+    const game = GameEngine.fromSnapshot(
+      determinize(information, library, hiddenSeed), library, chanceSeed
     );
-    const key = decisionKey(game, { kind: "action", action });
-    guidanceVotes.set(key, (guidanceVotes.get(key) ?? 0) + 1);
-    guidanceTotal++;
+    const guided = game.pending
+      ? chooseRolloutDecision(
+          game, information.observer, BALANCED, new SeededRng(chanceSeed ^ 0x85ebca6b)
+        )
+      : { kind: "action", action: chooseActionSeeded(
+          game, BALANCED, new SeededRng(chanceSeed ^ 0x85ebca6b), 2
+        ) } as Decision;
+    if (guided) {
+      const key = decisionKey(game, guided);
+      guidanceVotes.set(key, (guidanceVotes.get(key) ?? 0) + 1);
+      guidanceTotal++;
+    }
   }
   let iterations = 0;
 
   while (iterations < maxIterations && performance.now() < deadline) {
-    const iterationSeed = Math.floor(seedRng.next() * 0xffffffff);
-    const game = GameEngine.fromSnapshot(determinize(information, library, iterationSeed), library);
-    const simulationRng = new SeededRng(iterationSeed ^ 0x9e3779b9);
+    const hiddenSeed = Math.floor(seedRng.next() * 0xffffffff);
+    const chanceSeed = Math.floor(seedRng.next() * 0xffffffff);
+    const game = GameEngine.fromSnapshot(
+      determinize(information, library, hiddenSeed), library, chanceSeed
+    );
+    const simulationRng = new SeededRng(chanceSeed ^ 0x9e3779b9);
     const path: Edge[] = [];
     let node = root;
     let decisions = 0;
@@ -187,10 +204,14 @@ export function searchDecision(
       const point = game.getDecisionPoint();
       if (!point || point.options.length === 0) break;
       const legal = new Map<string, { decision: Decision; prior: number }>();
+      const actorProfile = point.actor === information.observer ? profile : BALANCED;
       for (const option of point.options) {
         const key = decisionKey(game, option.decision);
         if (!legal.has(key))
-          legal.set(key, { decision: option.decision, prior: decisionPrior(game, option.decision, profile) });
+          legal.set(key, {
+            decision: option.decision,
+            prior: decisionPrior(game, option.decision, actorProfile),
+          });
       }
       for (const [key] of legal) {
         const edge = node.edges.get(key);
@@ -198,9 +219,16 @@ export function searchDecision(
       }
 
       const width = Math.max(1, Math.ceil(2 * Math.sqrt(node.visits + 1)));
+      const expandedCategories = new Set(
+        [...node.edges.values()].map((candidate) => decisionCategory(candidate.decision))
+      );
       const unexpanded = [...legal.entries()]
         .filter(([key]) => !node.edges.has(key))
-        .sort((a, b) => b[1].prior - a[1].prior);
+        .sort((a, b) => {
+          const aNovel = expandedCategories.has(decisionCategory(a[1].decision)) ? 0 : 1;
+          const bNovel = expandedCategories.has(decisionCategory(b[1].decision)) ? 0 : 1;
+          return bNovel - aNovel || b[1].prior - a[1].prior;
+        });
       let edge: Edge | undefined;
       if (unexpanded.length > 0 && node.edges.size < width) {
         const [key, candidate] = unexpanded[0];
@@ -269,7 +297,9 @@ export function searchDecision(
       return score(b) - score(a);
     })[0] ?? rootCandidates.sort((a, b) => b.visits - a.visits)[0];
   if (!best) {
-    const game = GameEngine.fromSnapshot(determinize(information, library, config.seed), library);
+    const game = GameEngine.fromSnapshot(
+      determinize(information, library, config.seed), library, config.seed ^ 0x9e3779b9
+    );
     const fallback = game.getDecisionPoint()?.options[0]?.decision;
     if (!fallback) throw new Error("AI has no legal decision");
     return { decision: fallback, iterations, elapsedMs: performance.now() - started, principalVariation: [] };

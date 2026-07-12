@@ -2,21 +2,31 @@ import { isEnergy, isTrainer } from "../../model/cards";
 import type { CardFilter } from "../../model/effects";
 import type { ChoiceOption } from "../../core/choice";
 import type { EffectContext } from "../context";
-import { defineEffect } from "../registry";
-import { searchCardChoiceScore } from "../../ai/choiceScoring";
+import { defineEffect, defineEffectCommand } from "../registry";
+import { healingChoiceScore, searchCardChoiceScore } from "../../ai/choiceScoring";
+
+function drawAiValue(ctx: EffectContext, count: number): number {
+  const player = ctx.players[ctx.controller];
+  const drawn = Math.min(count, player.deck.length);
+  const remaining = player.deck.length - drawn;
+  if (remaining === 0) return -140;
+  if (remaining <= 2) return -35;
+  const handValue = player.hand.length <= 4 ? 72 : 44;
+  return handValue + Math.min(18, drawn * 4);
+}
 
 defineEffect<{ op: "draw"; count: number }>({
   op: "draw",
   run: (e, ctx) => ctx.drawCards(ctx.controller, e.count),
   canApply: (_e, ctx) => ctx.players[ctx.controller].deck.length > 0,
-  aiValue: (_e, ctx) => (ctx.players[ctx.controller].hand.length <= 4 ? 72 : 44),
+  aiValue: (e, ctx) => drawAiValue(ctx, e.count),
 });
 
 defineEffect<{ op: "drawPerOpponentPokemon" }>({
   op: "drawPerOpponentPokemon",
   run: (_e, ctx) => ctx.drawCards(ctx.controller, ctx.allInPlay(ctx.opponent).length),
   canApply: (_e, ctx) => ctx.players[ctx.controller].deck.length > 0,
-  aiValue: (_e, ctx) => (ctx.players[ctx.controller].hand.length <= 4 ? 72 : 44),
+  aiValue: (_e, ctx) => drawAiValue(ctx, ctx.allInPlay(ctx.opponent).length),
 });
 
 function discardFromHandLoop(
@@ -35,13 +45,9 @@ function discardFromHandLoop(
     "Discard which card?",
     candidates.map((card) => ({
       label: card.def.name,
+      informationKey: `discard-hand:${card.def.id}`,
       aiScore: isEnergy(card.def) ? 5 : isTrainer(card.def) ? 2 : 0,
-      apply: () => {
-        const index = player.hand.findIndex((c) => c.uid === card.uid);
-        if (index !== -1) player.discard.push(player.hand.splice(index, 1)[0]);
-        ctx.log(`${player.name} discards ${card.def.name}`);
-        ctx.queueThunk(() => discardFromHandLoop(ctx, count - 1, energyType));
-      },
+      operation: ctx.command("cards.discardFromHand", { cardUid: card.uid, count, energyType }),
     }))
   );
 }
@@ -60,17 +66,13 @@ function discardOppHandLoop(ctx: EffectContext, count: number): void {
   const opponent = ctx.players[ctx.opponent];
   if (opponent.hand.length === 0) return;
   ctx.requestChoice(
-    ctx.controller,
-    "Choose a card for your opponent to discard:",
+    ctx.opponent,
+    "Discard which card from your hand?",
     opponent.hand.map((card) => ({
       label: card.def.name,
-      aiScore: isEnergy(card.def) ? 10 : isTrainer(card.def) ? 8 : 5,
-      apply: () => {
-        const index = opponent.hand.findIndex((c) => c.uid === card.uid);
-        if (index !== -1) opponent.discard.push(opponent.hand.splice(index, 1)[0]);
-        ctx.log(`${opponent.name} discards ${card.def.name}`);
-        ctx.queueThunk(() => discardOppHandLoop(ctx, count - 1));
-      },
+      informationKey: `discard-own-hand:${card.def.id}`,
+      aiScore: -searchCardChoiceScore(ctx, card, ctx.opponent),
+      operation: ctx.command("cards.discardOpponentHand", { cardUid: card.uid, count }),
     }))
   );
 }
@@ -103,6 +105,7 @@ defineEffect<{
       const player = ctx.players[p];
       if (player.hand.length > 0) {
         player.deck.push(...player.hand.splice(0));
+        ctx.forgetHand(p);
         ctx.shuffleDeck(p);
         ctx.log(`${player.name} shuffles their hand into the deck`);
       }
@@ -134,8 +137,9 @@ defineEffect<{ op: "heal"; amount: number; target: import("../../model/effects")
       "Heal which Pokemon?",
       candidates.map(({ ref, pokemon }) => ({
         label: `${ctx.describeSlot(ref)} — ${pokemon.damage} damage`,
-        aiScore: Math.min(pokemon.damage, e.amount),
-        apply: () => healOne(pokemon),
+        informationKey: `heal:${pokemon.card.uid}`,
+        aiScore: healingChoiceScore(ctx, pokemon, ctx.controller, e.amount, ref.slot === "active"),
+        operation: ctx.command("cards.heal", { pokemonUid: pokemon.card.uid, amount: e.amount }),
       }))
     );
   },
@@ -165,25 +169,18 @@ function searchDeckLoop(
     const def = card.def;
     options.push({
       label: def.name,
+      informationKey: `search:${def.id}`,
       aiScore: searchCardChoiceScore(ctx, card, ctx.controller),
-      apply: () => {
-        const index = player.deck.findIndex((c) => c.def.id === def.id);
-        if (index !== -1) player.hand.push(player.deck.splice(index, 1)[0]);
-        ctx.log(`${player.name} takes ${def.name} from the deck`);
-        ctx.shuffleDeck(ctx.controller);
-        ctx.queueThunk(() => searchDeckLoop(ctx, filter, count - 1));
-      },
+      operation: ctx.command("cards.searchDeck", { cardId: def.id, filter, count }),
     });
   }
   options.push({
     label: "Take nothing",
+    informationKey: "take-nothing",
     aiScore: -100,
-    apply: () => {
-      ctx.shuffleDeck(ctx.controller);
-      ctx.log(`${player.name} shuffles their deck`);
-    },
+    operation: ctx.command("cards.finishSearch", {}),
   });
-  if (options.length === 1) { options[0].apply(); return; }
+  if (options.length === 1) { ctx.queueOperation(options[0].operation); return; }
   ctx.requestChoice(ctx.controller, "Search your deck for:", options);
 }
 
@@ -205,7 +202,9 @@ defineEffect<{ op: "drawToHandSize"; size: number }>({
     const p = ctx.players[ctx.controller];
     return p.hand.length < e.size && p.deck.length > 0;
   },
-  aiValue: (_e, ctx) => (ctx.players[ctx.controller].hand.length <= 3 ? 60 : 28),
+  aiValue: (e, ctx) => drawAiValue(
+    ctx, Math.max(0, e.size - ctx.players[ctx.controller].hand.length)
+  ),
 });
 
 defineEffect<{ op: "peekTopDeck"; count: number; filter?: CardFilter }>({
@@ -221,14 +220,16 @@ defineEffect<{ op: "peekTopDeck"; count: number; filter?: CardFilter }>({
     }
     const options: ChoiceOption[] = eligible.map((card) => ({
       label: card.def.name,
+      informationKey: `peek:${card.def.id}`,
       aiScore: searchCardChoiceScore(ctx, card, ctx.controller),
-      apply: () => {
-        const index = player.deck.findIndex((c) => c.uid === card.uid);
-        if (index !== -1) player.hand.push(player.deck.splice(index, 1)[0]);
-        ctx.log(`${player.name} takes ${card.def.name} from the top of their deck`);
-      },
+      operation: ctx.command("cards.takePeeked", { cardUid: card.uid }),
     }));
-    options.push({ label: "Take nothing", aiScore: -10, apply: () => {} });
+    options.push({
+      label: "Take nothing",
+      informationKey: "take-nothing",
+      aiScore: -10,
+      operation: ctx.command("cards.noop", {}),
+    });
     ctx.requestChoice(ctx.controller, "Choose a card to put into your hand:", options);
   },
   canApply: (_e, ctx) => ctx.players[ctx.controller].deck.length > 0,
@@ -250,7 +251,9 @@ defineEffect<{ op: "energyRestoreFlips"; flips: number }>({
       if (taken >= count) break;
       const idx = player.discard.findIndex((c) => c.uid === card.uid);
       if (idx !== -1) {
-        player.hand.push(player.discard.splice(idx, 1)[0]);
+        const restored = player.discard.splice(idx, 1)[0];
+        player.hand.push(restored);
+        ctx.revealInHand(ctx.controller, restored);
         ctx.log(`${card.def.name} recovered from discard pile`);
         taken++;
       }
@@ -261,3 +264,73 @@ defineEffect<{ op: "energyRestoreFlips"; flips: number }>({
     ctx.players[ctx.controller].discard.some((c) => isEnergy(c.def) && c.def.isBasic),
   aiValue: () => 35,
 });
+
+defineEffectCommand<{
+  cardUid: number;
+  count: number;
+  energyType?: import("../../model/energy").EnergyType;
+}>("cards.discardFromHand", (payload, ctx) => {
+  const player = ctx.players[ctx.controller];
+  const index = player.hand.findIndex((card) => card.uid === payload.cardUid);
+  if (index === -1) return;
+  const card = player.hand.splice(index, 1)[0];
+  ctx.forgetKnownCard(card.uid);
+  player.discard.push(card);
+  ctx.log(`${player.name} discards ${card.def.name}`);
+  discardFromHandLoop(ctx, payload.count - 1, payload.energyType);
+});
+
+defineEffectCommand<{ cardUid: number; count: number }>(
+  "cards.discardOpponentHand",
+  (payload, ctx) => {
+    const opponent = ctx.players[ctx.opponent];
+    const index = opponent.hand.findIndex((card) => card.uid === payload.cardUid);
+    if (index === -1) return;
+    const card = opponent.hand.splice(index, 1)[0];
+    ctx.forgetKnownCard(card.uid);
+    opponent.discard.push(card);
+    ctx.log(`${opponent.name} discards ${card.def.name}`);
+    discardOppHandLoop(ctx, payload.count - 1);
+  }
+);
+
+defineEffectCommand<{ pokemonUid: number; amount: number }>("cards.heal", (payload, ctx) => {
+  const entry = ctx.allInPlay(ctx.controller).find(({ pokemon }) => pokemon.card.uid === payload.pokemonUid);
+  if (!entry) return;
+  entry.pokemon.damage = Math.max(0, entry.pokemon.damage - payload.amount);
+  ctx.log(`${entry.pokemon.def.name} healed ${payload.amount}`, "heal", {
+    uid: entry.pokemon.card.uid,
+    amount: payload.amount,
+  });
+});
+
+defineEffectCommand<{ cardId: string; filter: CardFilter; count: number }>(
+  "cards.searchDeck",
+  (payload, ctx) => {
+    const player = ctx.players[ctx.controller];
+    const index = player.deck.findIndex((card) => card.def.id === payload.cardId);
+    if (index === -1) return;
+    const card = player.deck.splice(index, 1)[0];
+    player.hand.push(card);
+    ctx.revealInHand(ctx.controller, card);
+    ctx.log(`${player.name} takes ${card.def.name} from the deck`);
+    ctx.shuffleDeck(ctx.controller);
+    searchDeckLoop(ctx, payload.filter, payload.count - 1);
+  }
+);
+
+defineEffectCommand("cards.finishSearch", (_payload: unknown, ctx) => {
+  ctx.shuffleDeck(ctx.controller);
+  ctx.log(`${ctx.players[ctx.controller].name} shuffles their deck`);
+});
+
+defineEffectCommand<{ cardUid: number }>("cards.takePeeked", (payload, ctx) => {
+  const player = ctx.players[ctx.controller];
+  const index = player.deck.findIndex((card) => card.uid === payload.cardUid);
+  if (index === -1) return;
+  const card = player.deck.splice(index, 1)[0];
+  player.hand.push(card);
+  ctx.log(`${player.name} takes ${card.def.name} from the top of their deck`);
+});
+
+defineEffectCommand("cards.noop", () => {});

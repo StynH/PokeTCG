@@ -2,6 +2,11 @@ import type { Decision, Game } from "../engine/game";
 import { heuristicActionScore } from "./simpleAI";
 import type { AIProfile } from "./profiles";
 import type { SearchRequest, WorkerResponse } from "./workerProtocol";
+import {
+  matchPlannedDecision,
+  parsePrincipalVariation,
+  type PlannedDecision,
+} from "./principalVariation";
 
 export interface ChooseConfig {
   seed: number;
@@ -19,18 +24,30 @@ export interface ChosenDecision {
 export class AIController {
   private worker: Worker | null = null;
   private requestId = 0;
-  private plannedChoices: Array<{ prompt: string; label: string }> = [];
+  private plannedDecisions: PlannedDecision[] = [];
+  private plannedActor: number | null = null;
+  private budgetTurn = -1;
+  private remainingTurnBudgetMs = 0;
+  private searchesThisTurn = 0;
 
   private createWorker(): Worker {
-    this.worker?.terminate();
+    this.terminateWorker();
     this.worker = new Worker(new URL("./ai.worker.ts", import.meta.url), { type: "module" });
     return this.worker;
   }
 
-  cancel(): void {
+  private terminateWorker(): void {
     this.worker?.terminate();
     this.worker = null;
-    this.plannedChoices = [];
+  }
+
+  cancel(): void {
+    this.terminateWorker();
+    this.plannedDecisions = [];
+    this.plannedActor = null;
+    this.budgetTurn = -1;
+    this.remainingTurnBudgetMs = 0;
+    this.searchesThisTurn = 0;
   }
 
   async chooseDecision(
@@ -39,49 +56,57 @@ export class AIController {
     config: ChooseConfig
   ): Promise<ChosenDecision> {
     const revision = game.revision;
-    if (game.pending) {
-      const planned = this.plannedChoices[0];
-      let bestIndex = planned?.prompt === game.pending.prompt
-        ? game.pending.options.findIndex((option) => option.label === planned.label)
-        : -1;
-      if (bestIndex >= 0) this.plannedChoices.shift();
-      else {
-        this.plannedChoices = [];
-        bestIndex = 0;
-        for (let i = 1; i < game.pending.options.length; i++)
-          if (game.pending.options[i].aiScore > game.pending.options[bestIndex].aiScore) bestIndex = i;
-      }
-      const choiceId = game.pending.id!;
-      return {
-        decision: {
-          kind: "choice",
-          choiceId,
-          optionId: game.pending.options[bestIndex].id!,
-        },
-        revision,
-        iterations: 0,
-        elapsedMs: 0,
-      };
+    const point = game.getDecisionPoint();
+    if (!point || point.options.length === 0) throw new Error("AI has no legal decision");
+    const configuredBudget = config.timeBudgetMs ?? 5000;
+    if (this.budgetTurn !== game.turnNumber) {
+      this.budgetTurn = game.turnNumber;
+      this.remainingTurnBudgetMs = configuredBudget;
+      this.searchesThisTurn = 0;
+      this.plannedDecisions = [];
+      this.plannedActor = null;
     }
 
+    const planned = this.plannedActor === point.actor
+      ? matchPlannedDecision(point, this.plannedDecisions[0])
+      : null;
+    if (planned) {
+      this.plannedDecisions.shift();
+      return { decision: planned, revision, iterations: 0, elapsedMs: 0 };
+    }
+    this.plannedDecisions = [];
+    this.plannedActor = null;
+    if (point.options.length === 1)
+      return { decision: point.options[0].decision, revision, iterations: 0, elapsedMs: 0 };
+
     const actions = game.getLegalActions();
-    if (actions.length === 0) throw new Error("AI has no legal action");
-    const fallback = actions.reduce((best, action) =>
-      heuristicActionScore(game, action, profile.weights) > heuristicActionScore(game, best, profile.weights)
-        ? action
-        : best
-    );
-    if (actions.length === 1)
-      return { decision: { kind: "action", action: actions[0] }, revision, iterations: 0, elapsedMs: 0 };
+    let fallback: Decision;
+    if (game.pending) {
+      let bestIndex = 0;
+      for (let i = 1; i < game.pending.options.length; i++)
+        if (game.pending.options[i].aiScore > game.pending.options[bestIndex].aiScore) bestIndex = i;
+      fallback = point.options[bestIndex].decision;
+    } else {
+      fallback = { kind: "action", action: actions.reduce((best, action) =>
+          heuristicActionScore(game, action, profile.weights) > heuristicActionScore(game, best, profile.weights)
+            ? action
+            : best
+        ) };
+    }
+
+    if (this.remainingTurnBudgetMs <= 100)
+      return { decision: fallback, revision, iterations: 0, elapsedMs: 0 };
 
     const worker = this.createWorker();
     const requestId = ++this.requestId;
-    const hardBudget = config.timeBudgetMs ?? 5000;
+    const sliceLimit = this.searchesThisTurn === 0 ? 3500 : game.pending ? 650 : 900;
+    const hardBudget = Math.min(this.remainingTurnBudgetMs, sliceLimit);
     const searchBudget = Math.max(1, hardBudget - 100);
+    this.searchesThisTurn++;
     const request: SearchRequest = {
       type: "search",
       requestId,
-      information: game.getInformationState(game.current),
+      information: game.getInformationState(point.actor),
       profile,
       seed: config.seed,
       deadlineMs: searchBudget,
@@ -109,9 +134,12 @@ export class AIController {
         worker.onerror = null;
       };
       const timer = window.setTimeout(() => {
-        this.cancel();
+        this.terminateWorker();
+        this.plannedDecisions = [];
+        this.plannedActor = null;
+        this.remainingTurnBudgetMs = 0;
         finish({
-          decision: { kind: "action", action: fallback },
+          decision: fallback,
           revision,
           iterations: 0,
           elapsedMs: hardBudget,
@@ -119,29 +147,26 @@ export class AIController {
       }, hardBudget);
       config.signal?.addEventListener("abort", abort, { once: true });
       worker.onerror = () => {
-        this.cancel();
-        finish({ decision: { kind: "action", action: fallback }, revision, iterations: 0, elapsedMs: 0 });
+        this.terminateWorker();
+        this.plannedDecisions = [];
+        this.plannedActor = null;
+        this.remainingTurnBudgetMs = 0;
+        finish({ decision: fallback, revision, iterations: 0, elapsedMs: 0 });
       };
       worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
         const response = event.data;
         if (response.requestId !== requestId) return;
         if (response.type === "error") {
-          this.cancel();
-          finish({ decision: { kind: "action", action: fallback }, revision, iterations: 0, elapsedMs: 0 });
+          this.terminateWorker();
+          this.plannedDecisions = [];
+          this.plannedActor = null;
+          this.remainingTurnBudgetMs = 0;
+          finish({ decision: fallback, revision, iterations: 0, elapsedMs: 0 });
           return;
         }
-        this.plannedChoices = response.principalVariation
-          .slice(1)
-          .flatMap((key) => {
-            try {
-              const parsed = JSON.parse(key) as { kind?: string; prompt?: string; label?: string };
-              return parsed.kind === "choice" && parsed.prompt && parsed.label
-                ? [{ prompt: parsed.prompt, label: parsed.label }]
-                : [];
-            } catch {
-              return [];
-            }
-          });
+        this.remainingTurnBudgetMs = Math.max(0, this.remainingTurnBudgetMs - response.elapsedMs);
+        this.plannedDecisions = parsePrincipalVariation(response.principalVariation.slice(1));
+        this.plannedActor = point.actor;
         finish({
           decision: response.decision,
           revision,

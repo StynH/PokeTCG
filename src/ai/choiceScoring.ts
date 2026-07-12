@@ -2,6 +2,7 @@ import type { PlayerState, PokemonInPlay, SlotRef } from "../core/state";
 import type { AttackDef, CardDef, CardInstance } from "../model/cards";
 import { isEnergy, isPokemon, isTrainer } from "../model/cards";
 import type { EnergyType } from "../model/energy";
+import { intrinsicAttackValue } from "../rules/combatProjection";
 
 interface BattleScoringContext {
   players: [PlayerState, PlayerState];
@@ -11,19 +12,11 @@ interface BattleScoringContext {
     holder: PokemonInPlay,
     ownerIndex: number
   ): { provides: EnergyType[]; count: number };
+  effectiveHp?(ref: SlotRef, pokemon: PokemonInPlay): number;
 }
 
 function expectedAttackValue(attack: AttackDef): number {
-  let value = attack.damage ?? 0;
-  for (const effect of attack.effects ?? []) {
-    if (effect.op === "damage") value += effect.amount * 0.7;
-    if (effect.op === "damageCounters") value += effect.count * 7;
-    if (effect.op === "damagePerHeads") value += effect.flips * effect.amount * 0.5;
-    if (effect.op === "applyCondition" || effect.op === "applyPoison" || effect.op === "applyBurn")
-      value += 14;
-    if (effect.op === "nextAttackBonus") value += effect.amount * 0.5;
-  }
-  return value;
+  return intrinsicAttackValue(attack);
 }
 
 export function unmetEnergy(
@@ -67,7 +60,9 @@ export function pokemonBattleScore(
     else if (attack.cost.length > unmet)
       bestProgress = Math.max(bestProgress, value * (attack.cost.length - unmet) / attack.cost.length);
   }
-  const hpLeft = pokemon.def.hp - pokemon.damage;
+  const ref = ctx.allInPlay(owner).find((entry) => entry.pokemon === pokemon)?.ref;
+  const hp = ref && ctx.effectiveHp ? ctx.effectiveHp(ref, pokemon) : pokemon.def.hp;
+  const hpLeft = hp - pokemon.damage;
   const conditionPenalty = pokemon.condition ? 45 : 0;
   const lingeringPenalty = pokemon.poisonCounters * 14 + (pokemon.burned ? 18 : 0);
   return (
@@ -78,6 +73,41 @@ export function pokemonBattleScore(
     conditionPenalty -
     lingeringPenalty
   );
+}
+
+export function healingChoiceScore(
+  ctx: BattleScoringContext,
+  pokemon: PokemonInPlay,
+  owner: number,
+  amount: number,
+  isActive: boolean
+): number {
+  const healed = Math.min(pokemon.damage, amount);
+  const before = pokemonBattleScore(ctx, pokemon, owner, isActive);
+  const after = pokemonBattleScore(ctx, { ...pokemon, damage: pokemon.damage - healed }, owner, isActive);
+  return healed + (after - before) + (pokemon.def.isEx ? 18 : 0) + (isActive ? 10 : 0);
+}
+
+export function scoopUpChoiceScore(
+  ctx: BattleScoringContext,
+  pokemon: PokemonInPlay,
+  owner: number,
+  isActive: boolean
+): number {
+  const savedDamage = pokemon.damage * (pokemon.def.isEx ? 1.6 : 1);
+  const investment = pokemonBattleScore(ctx, pokemon, owner, isActive) + pokemon.energy.length * 10;
+  return savedDamage - investment * 0.35 - (isActive ? 25 : 0);
+}
+
+export function gustChoiceScore(
+  ctx: BattleScoringContext,
+  pokemon: PokemonInPlay,
+  owner: number
+): number {
+  const prizePressure = pokemon.def.isEx ? 45 : 0;
+  const trapped = pokemon.def.retreatCost * 8 - pokemon.energy.length * 3;
+  const setupDenial = pokemonBattleScore(ctx, pokemon, owner, false) * 0.2;
+  return pokemon.damage + prizePressure + trapped + setupDenial;
 }
 
 export function energyAttachmentChoiceScore(
@@ -97,7 +127,7 @@ export function energyAttachmentChoiceScore(
     best = Math.max(best, completion);
   }
   const existingInvestment = Math.min(24, pokemon.energy.length * 8);
-  return best + existingInvestment + (isActive ? 35 : 0);
+  return best + existingInvestment + (isActive ? 35 : 0) + attachedCardTacticalValue(card, pokemon);
 }
 
 export function energyRemovalChoiceScore(
@@ -110,7 +140,24 @@ export function energyRemovalChoiceScore(
   const before = pokemonBattleScore(ctx, pokemon, owner, isActive);
   const withoutCard = { ...pokemon, energy: pokemon.energy.filter((energy) => energy.uid !== card.uid) };
   const after = pokemonBattleScore(ctx, withoutCard, owner, isActive);
-  return -(before - after) - (isActive ? 20 : 0);
+  return -(before - after) - attachedCardTacticalValue(card, pokemon) - (isActive ? 20 : 0);
+}
+
+export function attachedCardTacticalValue(card: CardInstance, holder: PokemonInPlay): number {
+  const def = card.def;
+  let value = isEnergy(def) ? (def.damageRider ?? 0) * 0.8 : 0;
+  const modifiers = isEnergy(def) || isTrainer(def) ? (def.modifiers ?? []) : [];
+  for (const modifier of modifiers) {
+    if ("requiresHolderType" in modifier && modifier.requiresHolderType &&
+      !holder.def.types.includes(modifier.requiresHolderType)) continue;
+    if (modifier.kind === "damagePlus") value += modifier.amount * 0.7;
+    if (modifier.kind === "damageMinus") value += modifier.amount * 0.8;
+    if (modifier.kind === "hpPlus") value += modifier.amount * 0.55;
+    if (modifier.kind === "retreatDelta") value -= modifier.amount * 8;
+    if (modifier.kind === "noWeakness") value += holder.def.weakness ? 24 : 0;
+    if (modifier.kind === "preventConditions") value += 18;
+  }
+  return value;
 }
 
 export function energyMoveValue(
