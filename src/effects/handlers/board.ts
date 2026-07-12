@@ -40,21 +40,30 @@ defineEffect<{ op: "switchSelf"; optional?: boolean }>({
   },
 });
 
-defineEffect<{ op: "gustOpponent" }>({
+defineEffect<{ op: "gustOpponent"; optional?: boolean; thenIfSwitched?: Effect[] }>({
   op: "gustOpponent",
-  run: (_e, ctx) => {
+  run: (e, ctx) => {
     const opp = ctx.players[ctx.opponent];
     if (opp.bench.length === 0 || !opp.active) return;
-    ctx.requestChoice(
-      ctx.controller,
-      "Bring which Pokemon to the Active spot?",
-      opp.bench.map((pokemon, i) => ({
-        label: ctx.describeSlot({ p: ctx.opponent, slot: i }),
-        informationKey: `gust:${pokemon.card.uid}`,
-        aiScore: gustChoiceScore(ctx, pokemon, ctx.opponent),
-        operation: { kind: "system", operation: { op: "switchPokemon", player: ctx.opponent, pokemonUid: pokemon.card.uid } },
-      }))
-    );
+    const options: ChoiceOption[] = opp.bench.map((pokemon, i) => ({
+      label: ctx.describeSlot({ p: ctx.opponent, slot: i }),
+      informationKey: `gust:${pokemon.card.uid}`,
+      aiScore: gustChoiceScore(ctx, pokemon, ctx.opponent),
+      operation: ctx.command("board.gust", {
+        player: ctx.opponent,
+        pokemonUid: pokemon.card.uid,
+        thenIfSwitched: e.thenIfSwitched ?? [],
+      }),
+    }));
+    if (e.optional) {
+      options.push({
+        label: "Don't switch",
+        informationKey: "do-not-switch",
+        aiScore: -1,
+        operation: ctx.command("board.noop", {}),
+      });
+    }
+    ctx.requestChoice(ctx.controller, "Bring which Pokemon to the Active spot?", options);
   },
   canApply: (_e, ctx) => ctx.players[ctx.opponent].bench.length > 0,
   aiValue: () => 30,
@@ -200,6 +209,24 @@ defineEffect<{ op: "flip"; heads: Effect[]; tails: Effect[] }>({
 });
 
 defineEffectCommand("board.noop", () => {});
+
+defineEffectCommand<{ player: number; pokemonUid: number; thenIfSwitched: Effect[] }>(
+  "board.gust",
+  (payload, ctx) => {
+    const player = ctx.players[payload.player];
+    const index = player.bench.findIndex(
+      (pokemon) => pokemon.card.uid === payload.pokemonUid
+    );
+    if (index < 0) return;
+    const pokemon = player.bench[index];
+    ctx.swapActive(payload.player, index);
+    ctx.log(`${pokemon.def.name} is dragged to the Active spot`, "switch", {
+      player: payload.player,
+      uid: pokemon.card.uid,
+    });
+    if (payload.thenIfSwitched.length) ctx.queueEffects(payload.thenIfSwitched);
+  }
+);
 
 defineEffectCommand<{ pokemonUid: number }>("board.scoop", (payload, ctx) => {
   const entry = ctx.allInPlay(ctx.controller).find(({ pokemon }) => pokemon.card.uid === payload.pokemonUid);

@@ -118,8 +118,20 @@ defineEffect<{
 defineEffect<{ op: "heal"; amount: number; target: import("../../model/effects").EffectTarget }>({
   op: "heal",
   run: (e, ctx) => {
-    const candidates = ctx.allInPlay(ctx.controller).filter(({ pokemon }) => pokemon.damage > 0);
+    const source = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : ctx.players[ctx.controller].active;
+    const healOne = (pokemon: import("../../core/state").PokemonInPlay) => {
+      pokemon.damage = Math.max(0, pokemon.damage - e.amount);
+      ctx.log(`${pokemon.def.name} healed ${e.amount}`, "heal", {
+        uid: pokemon.card.uid,
+        amount: e.amount,
+      });
+    };
+    let candidates = ctx.allInPlay(ctx.controller).filter(({ pokemon }) => pokemon.damage > 0);
+    if (e.target === "self") candidates = candidates.filter(({ pokemon }) => pokemon === source);
+    else if (e.target === "anySelfChoiceExceptSelf")
+      candidates = candidates.filter(({ pokemon }) => pokemon !== source);
     if (candidates.length === 0) return;
+    if (e.target === "self" || candidates.length === 1) { healOne(candidates[0].pokemon); return; }
     ctx.requestChoice(
       ctx.controller,
       "Heal which Pokemon?",

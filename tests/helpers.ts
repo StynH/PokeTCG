@@ -82,3 +82,17 @@ export function attachEnergy(game: Game, energyId: string, target: SlotRef): voi
   game.players[target.p].hand.push(card);
   game.perform({ type: "attachEnergy", handUid: card.uid, target });
 }
+
+export function forceCoins(game: Game, heads: boolean): void {
+  (game as unknown as { rng: { next: () => number } }).rng = { next: () => (heads ? 0.1 : 0.9) };
+}
+
+export function resolveChoice(game: Game, labelIncludes: string): void {
+  if (!game.pending) throw new Error("No pending choice to resolve");
+  const index = game.pending.options.findIndex((o) => o.label.includes(labelIncludes));
+  if (index < 0)
+    throw new Error(
+      `No option matching "${labelIncludes}". Options: ${game.pending.options.map((o) => o.label).join(", ")}`
+    );
+  game.resolvePending(index);
+}

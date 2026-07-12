@@ -21,7 +21,7 @@ export interface PowerDef {
   usable?: boolean;
   oncePerTurn?: boolean;
   requiresActive?: boolean;
-  trigger?: "onPlayFromHand" | "onAttachBasicEnergy";
+  trigger?: "onPlayFromHand" | "onAttachBasicEnergy" | "onDamagedByAttack";
   triggerBasicEnergyType?: EnergyType;
   effects?: Effect[];
   modifiers?: Modifier[];

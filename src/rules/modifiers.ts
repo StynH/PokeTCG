@@ -1,7 +1,8 @@
 import { isEnergy, isTrainer } from "../model/cards";
+import type { EnergyType } from "../model/energy";
 import type { Modifier } from "../model/effects";
 import type { PlayerState, PokemonInPlay, SlotRef, StadiumState } from "../core/state";
-import { allInPlay } from "./board";
+import { allInPlay, getPokemon } from "./board";
 
 function collect(
   result: Modifier[],
@@ -13,8 +14,31 @@ function collect(
   for (const mod of mods ?? []) {
     if (mod.scope === "self" && !isSelf) continue;
     if (mod.scope === "yourPokemon" && sourceOwner !== targetOwner) continue;
+    if (mod.scope === "opponentPokemon" && sourceOwner === targetOwner) continue;
     result.push(mod);
   }
+}
+
+function holderHasEnergy(holder: PokemonInPlay, type: EnergyType): boolean {
+  return holder.energy.some((e) => isEnergy(e.def) && e.def.provides.includes(type));
+}
+
+function bodyModifierActive(
+  mod: Modifier,
+  sourceRef: SlotRef,
+  targetRef: SlotRef,
+  holder: PokemonInPlay,
+  target: PokemonInPlay | null
+): boolean {
+  if ("sourceRequiresActive" in mod && mod.sourceRequiresActive && sourceRef.slot !== "active")
+    return false;
+  if ("requiresEnergyType" in mod && mod.requiresEnergyType && !holderHasEnergy(holder, mod.requiresEnergyType))
+    return false;
+  if ("targetBenchedOnly" in mod && mod.targetBenchedOnly && targetRef.slot === "active")
+    return false;
+  if ("targetRequiresType" in mod && mod.targetRequiresType && !target?.def.types?.includes(mod.targetRequiresType))
+    return false;
+  return true;
 }
 
 export function modifiersAffecting(
@@ -23,20 +47,14 @@ export function modifiersAffecting(
   stadium: StadiumState | null
 ): Modifier[] {
   const result: Modifier[] = [];
+  const target = getPokemon(players, ref);
   for (let p = 0; p < 2; p++) {
     for (const { ref: sourceRef, pokemon } of allInPlay(players, p)) {
       const isSelf = sourceRef.p === ref.p && sourceRef.slot === ref.slot;
       if (pokemon.def.power?.kind === "Poke-Body") {
-        const bodyModifiers = pokemon.def.power.modifiers?.filter((modifier) => {
-          if (modifier.kind === "burnDamage" && modifier.sourceRequiresActive && sourceRef.slot !== "active")
-            return false;
-          if ((modifier.kind === "noWeakness" || modifier.kind === "damageMinus") && modifier.requiresEnergyType) {
-            const needed = modifier.requiresEnergyType;
-            if (!pokemon.energy.some((e) => isEnergy(e.def) && e.def.provides.includes(needed)))
-              return false;
-          }
-          return true;
-        });
+        const bodyModifiers = pokemon.def.power.modifiers?.filter((modifier) =>
+          bodyModifierActive(modifier, sourceRef, ref, pokemon, target)
+        );
         collect(result, bodyModifiers, p, isSelf, ref.p);
       }
       if (pokemon.tool && isTrainer(pokemon.tool.def))
@@ -72,12 +90,14 @@ export function damageMinusSum(
   players: [PlayerState, PlayerState],
   ref: SlotRef,
   stadium: StadiumState | null,
-  attackerIsBasic: boolean
+  attackerIsBasic: boolean,
+  attackerIsEx: boolean
 ): number {
   let total = 0;
   for (const mod of modifiersAffecting(players, ref, stadium)) {
     if (mod.kind !== "damageMinus") continue;
     if (mod.attackerBasicOnly && !attackerIsBasic) continue;
+    if (mod.requiresAttackerEx && !attackerIsEx) continue;
     total += mod.amount;
   }
   return total;

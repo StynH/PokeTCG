@@ -107,7 +107,7 @@
       "kind": "Poke-Body",
       "name": "Teleportation",
       "text": "As long as Abra has any Psychic Energy attached to it, the Retreat Cost for Abra is 0.",
-      "modifiers": [{ "kind": "retreatDelta", "amount": -1, "scope": "self" }]
+      "modifiers": [{ "kind": "retreatDelta", "amount": -1, "scope": "self", "requiresEnergyType": "Psychic" }]
     },
     "attacks": [
       {
@@ -184,7 +184,9 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Poison Spikes",
-      "text": "If Cacnea is your Active Pokémon and is damaged by an opponent's attack (even if Cacnea is Knocked Out), the Attacking Pokémon is now Poisoned."
+      "text": "If Cacnea is your Active Pokémon and is damaged by an opponent's attack (even if Cacnea is Knocked Out), the Attacking Pokémon is now Poisoned.",
+      "trigger": "onDamagedByAttack",
+      "effects": [{ "op": "applyPoison", "target": "defending" }]
     },
     "attacks": [
       {
@@ -231,7 +233,7 @@
         "cost": ["Fire", "Colorless"],
         "damage": 10,
         "text": "Search your discard pile for a Fire Energy card and attach it to Slugma.",
-        "effects": [{ "op": "attachEnergyFromDiscard", "energyType": "Fire", "target": "anySelfChoice" }]
+        "effects": [{ "op": "attachEnergyFromDiscard", "energyType": "Fire", "target": "self" }]
       }
     ]
   },
@@ -295,7 +297,8 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Magnetic Pull",
-      "text": "As long as Magnemite is your Active Pokémon, your opponent's Metal type Pokémon's Retreat Cost is 1 more."
+      "text": "As long as Magnemite is your Active Pokémon, your opponent's Metal type Pokémon's Retreat Cost is 1 more.",
+      "modifiers": [{ "kind": "retreatDelta", "amount": 1, "scope": "opponentPokemon", "sourceRequiresActive": true, "targetRequiresType": "Metal" }]
     },
     "attacks": [
       {
@@ -393,15 +396,18 @@
     "retreatCost": 2,
     "power": {
       "kind": "Poke-Body",
-      "name": "Rejuvination",
-      "text": "Whenever you attach a Water Energy card from your hand to Quagsire, remove 1 damage counter from Quagsire."
+      "name": "Rejuvenation",
+      "text": "Whenever you attach a Water Energy card from your hand to Quagsire, remove 1 damage counter from Quagsire.",
+      "trigger": "onAttachBasicEnergy",
+      "triggerBasicEnergyType": "Water",
+      "effects": [{ "op": "heal", "amount": 10, "target": "self" }]
     },
     "attacks": [
       {
         "name": "Mud Slide",
         "cost": ["Fighting", "Colorless"],
         "text": "Does 20 damage plus 10 more damage for each Water or Fighting Energy attached to Quagsire but not used to pay for this attack's Energy cost. You can't add more than 40 damage in this way.",
-        "effects": [{ "op": "damageScaled", "base": 20, "amount": 10, "per": "attackerEnergy" }]
+        "effects": [{ "op": "damageScaled", "base": 20, "amount": 10, "per": "attackerEnergy", "energyTypes": ["Water", "Fighting"], "unusedCost": 2, "maxBonus": 40 }]
       }
     ]
   },
@@ -436,7 +442,7 @@
   },
   {
     "id": "magcargo",
-    "name": "Macargo",
+    "name": "Magcargo",
     "image": "/cards/021.png",
     "supertype": "Pokemon",
     "stage": "Stage1",
@@ -448,15 +454,15 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Molten Guard",
-      "text": "As long as Macargo has any Fire Energy attached to it, damage done to your Fire type Pokémon by an opponent's attack is reduced by 20 (after applying Weakness and Resistance).",
-      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "yourPokemon" }]
+      "text": "As long as Magcargo has any Fire Energy attached to it, damage done to your Fire type Pokémon by an opponent's attack is reduced by 20 (after applying Weakness and Resistance).",
+      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "yourPokemon", "requiresEnergyType": "Fire", "targetRequiresType": "Fire" }]
     },
     "attacks": [
       {
         "name": "Molten Blast",
         "cost": ["Fire", "Fire", "Colorless"],
         "damage": 70,
-        "text": "Discard a Fire Energy card attached to Macargo.",
+        "text": "Discard a Fire Energy card attached to Magcargo.",
         "effects": [{ "op": "discardSelfEnergy", "count": 1, "energyType": "Fire" }]
       }
     ]
@@ -654,9 +660,8 @@
       {
         "name": "Dual Bolt",
         "cost": ["Lightning", "Colorless"],
-        "damage": 10,
         "text": "This attack does 10 damage to each of your opponent's Pokémon. If Pichu is on your Bench, this attack does 20 damage to each of your opponent's Pokémon instead. (Don't apply Weakness and Resistance for Benched Pokémon.)",
-        "effects": [{ "op": "damage", "amount": 10, "target": "eachOpponentBench", "applyWR": false }]
+        "effects": [{ "op": "damageEachOpponent", "amount": 10, "bonusAmount": 10, "ifSelfBenchedName": "Pichu" }]
       }
     ]
   },
@@ -675,7 +680,7 @@
         "name": "Milk Drink",
         "cost": ["Colorless"],
         "text": "Remove 1 damage counter from 1 of your Pokémon, except Miltank.",
-        "effects": [{ "op": "heal", "amount": 10, "target": "anySelfChoice" }]
+        "effects": [{ "op": "heal", "amount": 10, "target": "anySelfChoiceExceptSelf" }]
       },
       {
         "name": "Rollout",
@@ -724,7 +729,7 @@
       "kind": "Poke-Body",
       "name": "Steel Plating",
       "text": "As long as Lairon is your Active Pokémon, all Metal type Pokémon on your Bench take 20 less damage from your opponent's attacks (after applying Weakness and Resistance).",
-      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "yourPokemon" }]
+      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "yourPokemon", "sourceRequiresActive": true, "targetRequiresType": "Metal", "targetBenchedOnly": true }]
     },
     "attacks": [
       {
@@ -808,7 +813,8 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Desert Veil",
-      "text": "If Cacturne is your Active Pokémon, any damage done to Cacturne by attacks from your opponent's Pokémon ex are reduced by 20 (after applying Weakness and Resistance)."
+      "text": "If Cacturne is your Active Pokémon, any damage done to Cacturne by attacks from your opponent's Pokémon ex are reduced by 20 (after applying Weakness and Resistance).",
+      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "self", "sourceRequiresActive": true, "requiresAttackerEx": true }]
     },
     "attacks": [
       {
@@ -833,7 +839,9 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Flame Body",
-      "text": "If Magmar is your Active Pokémon and is damaged by an opponent's attack (even if Magmar is Knocked Out), flip a coin. If heads, the Attacking Pokémon is now Burned."
+      "text": "If Magmar is your Active Pokémon and is damaged by an opponent's attack (even if Magmar is Knocked Out), flip a coin. If heads, the Attacking Pokémon is now Burned.",
+      "trigger": "onDamagedByAttack",
+      "effects": [{ "op": "flip", "heads": [{ "op": "applyBurn", "target": "defending" }], "tails": [] }]
     },
     "attacks": [
       {
@@ -861,7 +869,7 @@
         "cost": ["Fighting", "Colorless"],
         "damage": 10,
         "text": "You may switch 1 of your opponent's Benched Pokémon with 1 of the Defending Pokémon. If you do, the new Defending Pokémon is now Poisoned.",
-        "effects": [{ "op": "gustOpponent" }, { "op": "applyPoison", "target": "defending" }]
+        "effects": [{ "op": "gustOpponent", "optional": true, "thenIfSwitched": [{ "op": "applyPoison", "target": "defending" }] }]
       }
     ]
   },
@@ -898,7 +906,9 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Destiny Bond",
-      "text": "If Wobbuffet is your Active Pokémon and is damaged by an opponent's attack (even if Wobbuffet is Knocked out), flip a coin. If heads, put 2 damage counters on the Attacking Pokémon."
+      "text": "If Wobbuffet is your Active Pokémon and is damaged by an opponent's attack (even if Wobbuffet is Knocked out), flip a coin. If heads, put 2 damage counters on the Attacking Pokémon.",
+      "trigger": "onDamagedByAttack",
+      "effects": [{ "op": "flip", "heads": [{ "op": "damageCounters", "count": 2, "target": "defending" }], "tails": [] }]
     },
     "attacks": [
       { "name": "Smash", "cost": ["Psychic", "Colorless"], "damage": 20 }
@@ -946,7 +956,8 @@
     "power": {
       "kind": "Poke-Body",
       "name": "Ominous Presence",
-      "text": "As long as Murkrow is your Active Pokémon, your opponent can't play any Supporter cards from his or her hand during your opponent's next turn."
+      "text": "As long as Murkrow is your Active Pokémon, your opponent can't play any Supporter cards from his or her hand during your opponent's next turn.",
+      "modifiers": [{ "kind": "blockOpponentSupporter", "scope": "self" }]
     },
     "attacks": [
       {
@@ -986,7 +997,7 @@
   },
   {
     "id": "feraligatr",
-    "name": "Fereligatr",
+    "name": "Feraligatr",
     "image": "/cards/043.png",
     "supertype": "Pokemon",
     "stage": "Stage2",
@@ -1175,9 +1186,8 @@
       {
         "name": "Shockwave",
         "cost": ["Lightning", "Metal", "Colorless"],
-        "damage": 50,
         "text": "Discard all Lightning Energy attached to Magneton. This attack does 50 damage to 1 of your opponent's Pokémon. Don't apply Weakness and Resistance for Benched Pokémon.",
-        "effects": [{ "op": "discardSelfEnergy", "count": 4, "energyType": "Lightning" }]
+        "effects": [{ "op": "discardSelfEnergy", "count": "all", "energyType": "Lightning" }, { "op": "damage", "amount": 50, "target": "anyOpponentChoice" }]
       }
     ]
   },
@@ -1575,7 +1585,7 @@
     "supertype": "Pokemon",
     "stage": "Basic",
     "hp": 80,
-    "types": ["Fighting", "Darkness"],
+    "types": ["Metal", "Darkness"],
     "weakness": "Fire",
     "retreatCost": 2,
     "power": {
@@ -1587,7 +1597,7 @@
     "attacks": [
       {
         "name": "Corrosive Lockdown",
-        "cost": ["Darkness", "Colorless"],
+        "cost": ["Metal", "Colorless"],
         "damage": 20,
         "text": "The Defending Pokémon is now Poisoned. As long as the Defending Pokémon remains Poisoned, it cannot retreat.",
         "effects": [
@@ -1597,7 +1607,7 @@
       },
       {
         "name": "Shadow Crash",
-        "cost": ["Darkness", "Darkness", "Colorless"],
+        "cost": ["Metal", "Darkness", "Colorless"],
         "damage": 60,
         "text": "Discard a Special Energy card attached to the Defending Pokémon. If you do, this attack does 20 more damage.",
         "effects": [{ "op": "discardDefenderSpecialEnergyBonus", "bonus": 20 }]

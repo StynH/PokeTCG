@@ -120,7 +120,11 @@ export function projectAttackDamage(
   }
   if (defenderRef)
     damage = Math.max(0, damage - damageMinusSum(
-      ctx.players, defenderRef, ctx.stadium, attacker.def.stage === "Basic"
+      ctx.players,
+      defenderRef,
+      ctx.stadium,
+      attacker.def.stage === "Basic",
+      attacker.def.isEx ?? false
     ));
   return damage;
 }

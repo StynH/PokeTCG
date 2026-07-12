@@ -7,11 +7,12 @@ export type EffectTarget =
   | "self"
   | "selfBenchChoice"
   | "anySelfChoice"
+  | "anySelfChoiceExceptSelf"
   | "opponentBenchChoice"
   | "anyOpponentChoice"
   | "eachOpponentBench";
 
-export type ModifierScope = "self" | "yourPokemon" | "allPokemon";
+export type ModifierScope = "self" | "yourPokemon" | "opponentPokemon" | "allPokemon";
 
 export type ScalePer =
   | "attackerEnergy"
@@ -23,12 +24,13 @@ export type ScalePer =
 
 export type Modifier =
   | { kind: "damagePlus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType }
-  | { kind: "damageMinus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType; requiresEnergyType?: EnergyType; attackerBasicOnly?: boolean }
+  | { kind: "damageMinus"; amount: number; scope: ModifierScope; requiresHolderType?: EnergyType; requiresEnergyType?: EnergyType; attackerBasicOnly?: boolean; sourceRequiresActive?: boolean; targetRequiresType?: EnergyType; targetBenchedOnly?: boolean; requiresAttackerEx?: boolean }
   | { kind: "noWeakness"; scope: ModifierScope; requiresEnergyType?: EnergyType }
   | { kind: "preventConditions"; scope: ModifierScope }
-  | { kind: "retreatDelta"; amount: number; scope: ModifierScope }
+  | { kind: "retreatDelta"; amount: number; scope: ModifierScope; requiresEnergyType?: EnergyType; sourceRequiresActive?: boolean; targetRequiresType?: EnergyType }
   | { kind: "hpPlus"; amount: number; scope: ModifierScope }
   | { kind: "blockOpponentStadium"; scope: ModifierScope }
+  | { kind: "blockOpponentSupporter"; scope: ModifierScope }
   | { kind: "burnDamage"; amount: number; scope: ModifierScope; sourceRequiresActive?: boolean };
 
 export interface CardFilter {
@@ -44,7 +46,8 @@ export interface CardFilter {
 
 export type Effect =
   | { op: "damage"; amount: number; target: EffectTarget; applyWR?: boolean; ignoreResistance?: boolean; ignoreDefenderEffects?: boolean }
-  | { op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType }
+  | { op: "damageEachOpponent"; amount: number; bonusAmount?: number; ifSelfBenchedName?: string }
+  | { op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType; energyTypes?: EnergyType[]; unusedCost?: number; maxBonus?: number }
   | { op: "recoil"; amount: number }
   | { op: "protectNextTurn"; mode: "preventAll" | "reduce"; amount?: number }
   | { op: "lockDefending"; what: "attack" | "retreat" }
@@ -68,8 +71,8 @@ export type Effect =
   | { op: "damagePerHeads"; flips: number; amount: number; target: EffectTarget; recoilIfNoHeads?: number }
   | { op: "searchDeck"; filter: CardFilter; count: number }
   | { op: "switchSelf"; optional?: boolean }
-  | { op: "gustOpponent" }
-  | { op: "attachEnergyFromDiscard"; energyType: EnergyType; target: "selfBenchChoice" | "anySelfChoice" }
+  | { op: "gustOpponent"; optional?: boolean; thenIfSwitched?: Effect[] }
+  | { op: "attachEnergyFromDiscard"; energyType: EnergyType; target: "selfBenchChoice" | "anySelfChoice" | "self" }
   | { op: "attachEnergyFromHand"; energyType?: EnergyType; target: "anySelfChoice" | "self" }
   | { op: "attachEnergyFromDeck"; energyType: EnergyType; basicOnly?: boolean; targetType?: EnergyType }
   | { op: "rareCandy" }

@@ -1,5 +1,5 @@
 import { isEnergy, resistancesOf } from "../../model/cards";
-import type { CardInstance } from "../../model/cards";
+import type { CardInstance, EnergyCardDef } from "../../model/cards";
 import type { EffectTarget, ScalePer, Condition } from "../../model/effects";
 import type { EnergyType } from "../../model/energy";
 import type { SlotRef } from "../../core/state";
@@ -71,18 +71,20 @@ defineEffect<{ op: "damageCounters"; count: number; target: EffectTarget }>({
   aiValue: (e) => e.count * 10 * 0.8,
 });
 
-defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType }>({
+defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType; energyTypes?: EnergyType[]; unusedCost?: number; maxBonus?: number }>({
   op: "damageScaled",
   run: (e, ctx) => {
     const me = ctx.players[ctx.controller];
     const defendingRef: SlotRef = { p: ctx.opponent, slot: "active" };
     const defender = ctx.getPokemon(defendingRef);
-    const countEnergy = (energy: CardInstance[] | undefined): number =>
-      !energy
-        ? 0
-        : e.energyType
-          ? energy.filter((c) => isEnergy(c.def) && c.def.provides.includes(e.energyType!)).length
-          : energy.length;
+    const countEnergy = (energy: CardInstance[] | undefined): number => {
+      if (!energy) return 0;
+      if (e.energyTypes?.length)
+        return energy.filter((c) => isEnergy(c.def) && e.energyTypes!.some((t) => (c.def as EnergyCardDef).provides.includes(t))).length;
+      if (e.energyType)
+        return energy.filter((c) => isEnergy(c.def) && c.def.provides.includes(e.energyType!)).length;
+      return energy.length;
+    };
     let count = 0;
     switch (e.per) {
       case "attackerEnergy":         count = countEnergy(me.active?.energy); break;
@@ -92,10 +94,29 @@ defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; 
       case "yourBench":              count = me.bench.length; break;
       case "oppBench":               count = ctx.players[ctx.opponent].bench.length; break;
     }
-    const total = e.base + e.amount * count;
+    if (e.per === "attackerEnergy" && e.unusedCost) count = Math.max(0, count - e.unusedCost);
+    let bonus = e.amount * count;
+    if (e.maxBonus !== undefined) bonus = Math.min(bonus, e.maxBonus);
+    const total = e.base + bonus;
     if (total > 0 && !ctx.addAttackDamage(total)) ctx.dealDamage(defendingRef, total);
   },
   aiValue: (e) => e.base + e.amount * 2,
+});
+
+defineEffect<{ op: "damageEachOpponent"; amount: number; bonusAmount?: number; ifSelfBenchedName?: string }>({
+  op: "damageEachOpponent",
+  run: (e, ctx) => {
+    const me = ctx.players[ctx.controller];
+    const bonusActive =
+      e.ifSelfBenchedName && me.bench.some((b) => b.def.name === e.ifSelfBenchedName);
+    const amount = e.amount + (bonusActive && e.bonusAmount ? e.bonusAmount : 0);
+    if (amount <= 0) return;
+    const opp = ctx.players[ctx.opponent];
+    if (opp.active && !ctx.addAttackDamage(amount))
+      ctx.dealDamage({ p: ctx.opponent, slot: "active" }, amount);
+    opp.bench.forEach((_, i) => ctx.dealDamage({ p: ctx.opponent, slot: i }, amount, false));
+  },
+  aiValue: (e) => (e.amount + (e.bonusAmount ?? 0)) * 1.2,
 });
 
 defineEffect<{ op: "recoil"; amount: number }>({
