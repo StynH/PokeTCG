@@ -1,4 +1,4 @@
-import type { CardDef, CardInstance, EnergyCardDef, PokemonCardDef, TrainerCardDef } from "../model/cards";
+import type { AttackDef, CardDef, CardInstance, EnergyCardDef, PokemonCardDef, PowerDef, TrainerCardDef } from "../model/cards";
 import { isEnergy, isPokemon, isTrainer, resistancesOf } from "../model/cards";
 import type { CardLibrary } from "../model/cards";
 import type { Effect } from "../model/effects";
@@ -17,10 +17,10 @@ import {
 } from "../core/state";
 import { getPokemon, allInPlay, describeSlot } from "../rules/board";
 import { energyUnits, canPayCost, totalEnergyUnits } from "../rules/energy";
-import { modifierMax, modifierSum, damageMinusSum, conditionsPrevented, effectiveHp, effectiveRetreatCost, weaknessNullified } from "../rules/modifiers";
+import { modifierMax, modifierSum, damageMinusSum, conditionsPrevented, effectiveHp, effectiveRetreatCost, weaknessNullified, attackEffectsPrevented, bodiesDisabledFor, powersDisabled } from "../rules/modifiers";
 import { matchesFilter } from "../rules/filters";
 import type { EffectContext } from "../effects/context";
-import { runEffect, runEffectCommand, effectCanApply, effectAiValue } from "../effects/registry";
+import { runEffect, runEffectCommand, effectCanApply, effectAiValue, effectsAiValue } from "../effects/registry";
 import { pokemonBattleScore } from "../ai/choiceScoring";
 import "../effects/handlers/index";
 
@@ -431,7 +431,11 @@ export class Game {
         if (def.kind === "Supporter" && (me.supporterTurn === this.turnNumber || this.supportersBlockedByOpponent())) continue;
         if (!this.trainerRestrictionOk(def)) continue;
         if (def.kind === "Stadium") {
-          if (this.stadium?.card.def.name !== def.name && !this.stadiumsBlockedByOpponent())
+          if (
+            this.stadium?.card.def.name !== def.name &&
+            !this.stadiumsBlockedByOpponent() &&
+            me.noStadiumTurn !== this.turnNumber
+          )
             actions.push({ type: "playStadium", handUid: card.uid });
         } else if (def.kind === "Tool") {
           for (const { ref, pokemon } of this.allInPlay(this.current))
@@ -443,11 +447,12 @@ export class Game {
     }
 
     for (const { ref, pokemon } of this.allInPlay(this.current)) {
-      const power = pokemon.def.power;
+      const power = this.effectivePower(pokemon);
       if (!power?.usable) continue;
       if (power.oncePerTurn && pokemon.powerUsedTurn === this.turnNumber) continue;
       if (power.requiresActive && ref.slot !== "active") continue;
       if (pokemon.condition || pokemon.poisonCounters > 0 || pokemon.burned) continue;
+      if (powersDisabled(this.players, ref, this.stadium, pokemon)) continue;
       if (this.powerHasValidUse(power.effects ?? [], ref))
         actions.push({ type: "usePower", target: ref });
     }
@@ -472,8 +477,13 @@ export class Game {
         !this.locked(active, "attack")
       ) {
         active.def.attacks.forEach((attack, i) => {
-          if (this.canPayCost(attack.cost, active, this.current))
+          if (!this.attackLocked(active, attack.name) && this.canPayCost(attack.cost, active, this.current))
             actions.push({ type: "attack", index: i });
+        });
+        const borrowed = this.borrowedAttacks(this.current);
+        borrowed.forEach((attack, i) => {
+          if (!this.attackLocked(active, attack.name) && this.canPayCost(attack.cost, active, this.current))
+            actions.push({ type: "attack", index: active.def.attacks.length + i });
         });
       }
     }
@@ -494,10 +504,10 @@ export class Game {
       case "playTool":     return `Attach ${handCard(action.handUid)} to ${this.describeSlot(action.target)}`;
       case "usePower": {
         const pokemon = this.getPokemon(action.target);
-        return `Use ${pokemon?.def.power?.name} (${pokemon?.def.name})`;
+        return `Use ${pokemon ? this.effectivePower(pokemon)?.name : "?"} (${pokemon?.def.name})`;
       }
       case "retreat":      return `Retreat into ${me.bench[action.benchIndex]?.def.name}`;
-      case "attack":       return `Attack: ${me.active?.def.attacks[action.index]?.name}`;
+      case "attack":       return `Attack: ${this.attackAt(this.current, action.index)?.name}`;
       case "pass":         return "End Turn";
     }
   }
@@ -545,12 +555,43 @@ export class Game {
           player: this.current,
           uid: pokemon.card.uid,
         });
+        if (isEnergy(card.def) && card.def.onAttachEffects?.length &&
+          !(card.def.onAttachExcludesEx && pokemon.def.isEx)) {
+          this.addLog(`${card.def.name}'s effect applies to ${pokemon.def.name}`, "energy", {
+            player: this.current,
+            uid: pokemon.card.uid,
+          });
+          this.queueEffectsFor(card.def.onAttachEffects, this.current, undefined, false, action.target);
+        }
         const power = pokemon.def.power;
-        if (power?.trigger === "onAttachBasicEnergy" && power.effects && isEnergy(card.def) && card.def.isBasic) {
-          const typeMatch = !power.triggerBasicEnergyType || card.def.provides.includes(power.triggerBasicEnergyType);
+        if (power?.trigger === "onAttachBasicEnergy" && power.effects && isEnergy(card.def)) {
+          const eDef = card.def;
+          const typeMatch = power.triggerBasicEnergyTypes
+            ? power.triggerBasicEnergyTypes.some((t) => eDef.provides.includes(t))
+            : eDef.isBasic &&
+              (!power.triggerBasicEnergyType || eDef.provides.includes(power.triggerBasicEnergyType));
           if (typeMatch) {
             this.addLog(`${power.name} triggers!`, "power", { player: this.current, uid: pokemon.card.uid });
             this.queueEffectsFor(power.effects, this.current, undefined, false, action.target);
+          }
+        }
+        if (action.target.slot === "active" && pokemon === me.active) {
+          const oppActive = this.players[1 - this.current].active;
+          const oppPower = oppActive?.def.power;
+          if (
+            oppActive &&
+            oppPower?.kind === "Poke-Body" &&
+            oppPower.trigger === "onOpponentActiveEnergyAttach" &&
+            oppPower.effects?.length
+          ) {
+            this.addLog(`${oppPower.name} triggers!`, "power", {
+              player: 1 - this.current,
+              uid: oppActive.card.uid,
+            });
+            this.queueEffectsFor(oppPower.effects, 1 - this.current, undefined, false, {
+              p: 1 - this.current,
+              slot: "active",
+            });
           }
         }
         break;
@@ -566,14 +607,16 @@ export class Game {
       }
       case "usePower": {
         const pokemon = this.getPokemon(action.target);
-        if (!pokemon?.def.power) return;
+        const power = pokemon ? this.effectivePower(pokemon) : undefined;
+        if (!pokemon || !power) return;
+        if (powersDisabled(this.players, action.target, this.stadium, pokemon)) return;
         pokemon.powerUsedTurn = this.turnNumber;
-        this.addLog(`${me.name} uses ${pokemon.def.power.name}`, "power", {
+        this.addLog(`${me.name} uses ${power.name}`, "power", {
           player: this.current,
           uid: pokemon.card.uid,
         });
         this.queueEffectsFor(
-          pokemon.def.power.effects ?? [],
+          power.effects ?? [],
           this.current,
           undefined,
           false,
@@ -657,11 +700,13 @@ export class Game {
       hand: [],
       discard: [],
       prizes: [],
+      lostZone: [],
       active: null,
       bench: [],
       attachedEnergyTurn: null,
       supporterTurn: null,
       retreatedTurn: null,
+      noStadiumTurn: null,
       turnsTaken: 0,
     };
   }
@@ -724,6 +769,7 @@ export class Game {
     if (!card || !isPokemon(card.def) || card.def.stage !== "Basic") return;
     player.hand = player.hand.filter((candidate) => candidate.uid !== cardUid);
     player.active = makePokemonInPlay(card, 0);
+    player.active.activeSince = 0;
     const rest = player.hand
       .filter((candidate) => isPokemon(candidate.def) && candidate.def.stage === "Basic")
       .slice(0, BENCH_LIMIT);
@@ -774,6 +820,7 @@ export class Game {
     pokemon.burned = false;
     pokemon.guard = null;
     pokemon.locks = {};
+    pokemon.attackLocks = {};
   }
 
   private swapActive(p: number, benchIndex: number): void {
@@ -786,9 +833,11 @@ export class Game {
     oldActive.burned = false;
     oldActive.guard = null;
     oldActive.locks = {};
+    oldActive.attackLocks = {};
     oldActive.attackBoost = null;
     player.bench[benchIndex] = oldActive;
     player.active = newActive;
+    newActive.activeSince = this.turnNumber;
   }
 
   private requestChoice(player: number, prompt: string, options: ChoiceOption[]): void {
@@ -855,19 +904,36 @@ export class Game {
     return pairs;
   }
 
+  private effectivePower(pokemon: PokemonInPlay): PowerDef | undefined {
+    if (pokemon.grantedPower && this.turnNumber <= pokemon.grantedPower.untilTurn)
+      return pokemon.grantedPower.power;
+    return pokemon.def.power;
+  }
+
+  private bodyActive(pokemon: PokemonInPlay): boolean {
+    return pokemon.def.power?.kind === "Poke-Body" && !bodiesDisabledFor(pokemon, this.stadium);
+  }
+
+  private hasExtraPrizeOnPoisonKO(p: number): boolean {
+    return this.allInPlay(p).some(({ pokemon }) =>
+      this.bodyActive(pokemon) &&
+      !!pokemon.def.power!.modifiers?.some((m) => m.kind === "extraPrizeOnPoisonKO")
+    );
+  }
+
   private stadiumsBlockedByOpponent(): boolean {
     const oppActive = this.players[1 - this.current].active;
     return (
-      oppActive?.def.power?.kind === "Poke-Body" &&
-      !!oppActive.def.power.modifiers?.some((m) => m.kind === "blockOpponentStadium")
+      !!oppActive && this.bodyActive(oppActive) &&
+      !!oppActive.def.power!.modifiers?.some((m) => m.kind === "blockOpponentStadium")
     );
   }
 
   private supportersBlockedByOpponent(): boolean {
     const oppActive = this.players[1 - this.current].active;
     return (
-      oppActive?.def.power?.kind === "Poke-Body" &&
-      !!oppActive.def.power.modifiers?.some((m) => m.kind === "blockOpponentSupporter")
+      !!oppActive && this.bodyActive(oppActive) &&
+      !!oppActive.def.power!.modifiers?.some((m) => m.kind === "blockOpponentSupporter")
     );
   }
 
@@ -898,11 +964,16 @@ export class Game {
 
   getEffectsAiValue(effects: Effect[], controller: number, sourceRef?: SlotRef): number {
     const context = this.makeContext(controller, undefined, false, sourceRef);
-    return effects.reduce((total, effect) => total + effectAiValue(effect, context), 0);
+    return effectsAiValue(effects, context);
   }
 
   private locked(pokemon: PokemonInPlay, what: "attack" | "retreat"): boolean {
     const until = pokemon.locks[what];
+    return until !== undefined && this.turnNumber <= until;
+  }
+
+  private attackLocked(pokemon: PokemonInPlay, attackName: string): boolean {
+    const until = pokemon.attackLocks[attackName];
     return until !== undefined && this.turnNumber <= until;
   }
 
@@ -934,6 +1005,7 @@ export class Game {
       energyUnits: (card, holder, ownerIndex) =>
         game.energyUnits(card, holder, ownerIndex),
       effectiveHp: (ref, pokemon) => game.effectiveHp(ref, pokemon),
+      effectiveRetreatCost: (ref, pokemon) => game.effectiveRetreatCost(ref, pokemon),
       conditionsPrevented: (ref) =>
         conditionsPrevented(game.players, ref, game.stadium),
       matchesFilter: (def, filter) => matchesFilter(def, filter),
@@ -986,7 +1058,36 @@ export class Game {
         game.queueEffectsFor(effects, frame),
       queueOperation: (operation) => game.operations.unshift(structuredClone(operation)),
       command: (name, payload) => effectCommand(name, payload, frame),
+      stadium: () => game.stadium,
+      removeStadium: () => {
+        if (!game.stadium) return;
+        game.players[game.stadium.owner].discard.push(game.stadium.card);
+        game.addLog(`${game.stadium.card.def.name} is discarded from play`, "trainer");
+        game.stadium = null;
+      },
+      endTurn: () => {
+        game.turnEnding = true;
+      },
+      blockStadiumNextTurn: (player) => {
+        game.players[player].noStadiumTurn = game.turnNumber + 1;
+      },
+      benchFromDeck: (cardUid) => game.benchFromDeck(controller, cardUid),
     };
+  }
+
+  private benchFromDeck(p: number, cardUid: number): boolean {
+    const player = this.players[p];
+    if (player.bench.length >= BENCH_LIMIT) return false;
+    const index = player.deck.findIndex((card) => card.uid === cardUid);
+    if (index === -1) return false;
+    const card = player.deck.splice(index, 1)[0];
+    const mon = makePokemonInPlay(card, this.turnNumber);
+    player.bench.push(mon);
+    this.addLog(`${player.name} benches ${card.def.name} from the deck`, "bench", {
+      player: p,
+      uid: card.uid,
+    });
+    return true;
   }
 
   private queueEffectsFor(
@@ -1052,6 +1153,12 @@ export class Game {
     return null;
   }
 
+  effectiveTypes(pokemon: PokemonInPlay): EnergyType[] {
+    if (pokemon.typeOverride && this.turnNumber <= pokemon.typeOverride.untilTurn)
+      return pokemon.typeOverride.types;
+    return pokemon.def.types;
+  }
+
   // ── Damage pipeline ──────────────────────────────────────────────────────
 
   private dealAttackDamage(
@@ -1073,7 +1180,8 @@ export class Game {
         for (const energy of attacker.energy) {
           const eDef = energy.def as EnergyCardDef;
           if (!eDef.damageRider) continue;
-          if (eDef.damageRiderType && !attacker.def.types?.includes(eDef.damageRiderType)) continue;
+          if (eDef.damageRiderType && !this.effectiveTypes(attacker).includes(eDef.damageRiderType)) continue;
+          if (eDef.damageRiderTarget === "active" && ref.slot !== "active") continue;
           amount += eDef.damageRider;
         }
         amount = Math.max(0, amount);
@@ -1103,9 +1211,12 @@ export class Game {
       const attacker = context.fromAttack
         ? this.getPokemon({ p: context.controller, slot: "active" })
         : null;
-      const attackerIsBasic = attacker?.def.stage === "Basic";
-      const attackerIsEx = attacker?.def.isEx ?? false;
-      const reduction = damageMinusSum(this.players, ref, this.stadium, attackerIsBasic, attackerIsEx);
+      const reduction = damageMinusSum(this.players, ref, this.stadium, {
+        isBasic: attacker?.def.stage === "Basic",
+        isEx: attacker?.def.isEx ?? false,
+        isEvolved: !!attacker && attacker.def.stage !== "Basic",
+        hasSpecialEnergy: !!attacker && attacker.energy.some((c) => isEnergy(c.def) && !c.def.isBasic),
+      });
       if (reduction > 0 && amount > 0) amount = Math.max(0, amount - reduction);
     }
     if (amount > 0) {
@@ -1116,7 +1227,7 @@ export class Game {
       });
       if (context.fromAttack && ref.slot === "active" && ref.p !== context.controller) {
         const power = target.def.power;
-        if (power?.kind === "Poke-Body" && power.trigger === "onDamagedByAttack" && power.effects?.length) {
+        if (this.bodyActive(target) && power?.trigger === "onDamagedByAttack" && power.effects?.length) {
           this.addLog(`${power.name} triggers!`, "power", { player: ref.p, uid: target.card.uid });
           this.queueEffectsFor(power.effects, ref.p, undefined, false, { p: ref.p, slot: "active" });
         }
@@ -1131,11 +1242,43 @@ export class Game {
 
   // ── Attack ───────────────────────────────────────────────────────────────
 
+  private borrowedAttacks(p: number): AttackDef[] {
+    const active = this.players[p].active;
+    if (!active) return [];
+    const result: AttackDef[] = [];
+    const power = active.def.power;
+    if (power?.kind === "Poke-Body" && this.bodyActive(active)) {
+      const mod = power.modifiers?.find((m) => m.kind === "borrowAttacks");
+      if (mod && mod.kind === "borrowAttacks")
+        for (let owner = 0; owner < 2; owner++)
+          for (const card of this.players[owner].discard)
+            if (isPokemon(card.def) && card.def.name.includes(mod.nameContains))
+              result.push(...card.def.attacks);
+    }
+    if (this.stadium && isTrainer(this.stadium.card.def)) {
+      const mod = this.stadium.card.def.modifiers?.find((m) => m.kind === "borrowUnderneathAttacks");
+      if (
+        mod && mod.kind === "borrowUnderneathAttacks" &&
+        active.def.stage !== "Basic" && (!mod.excludeEx || !active.def.isEx)
+      )
+        for (const card of active.underneath)
+          if (isPokemon(card.def)) result.push(...card.def.attacks);
+    }
+    return result;
+  }
+
+  private attackAt(p: number, index: number): AttackDef | undefined {
+    const active = this.players[p].active;
+    if (!active) return undefined;
+    if (index < active.def.attacks.length) return active.def.attacks[index];
+    return this.borrowedAttacks(p)[index - active.def.attacks.length];
+  }
+
   private executeAttack(index: number): void {
     const me = this.players[this.current];
     const active = me.active;
     if (!active) return;
-    const attack = active.def.attacks[index];
+    const attack = this.attackAt(this.current, index);
     if (!attack) return;
     this.turnEnding = true;
     if (active.condition === "confused") {
@@ -1167,7 +1310,7 @@ export class Game {
     });
     active.attackBoost = null;
     this.operations.push({ kind: "system", operation: { op: "finishAttackDamage", attackId } });
-    this.queueEffectsFor(attack.effects ?? [], this.current, active.def.types, true, {
+    this.queueEffectsFor(attack.effects ?? [], this.current, this.effectiveTypes(active), true, {
       p: this.current,
       slot: "active",
     }, attackId);
@@ -1234,13 +1377,17 @@ export class Game {
       return;
     }
     const defender = this.players[1 - queued.frame.controller].active;
+    const defenderRef: SlotRef = { p: 1 - queued.frame.controller, slot: "active" };
+    const guardPreventsEffects =
+      defender?.guard?.mode === "preventAll" && this.turnNumber <= defender.guard.untilTurn;
+    const bodyPreventsEffects =
+      !!defender && attackEffectsPrevented(this.players, defenderRef, this.stadium);
     if (
       queued.frame.fromAttack &&
-      defender?.guard?.mode === "preventAll" &&
-      this.turnNumber <= defender.guard.untilTurn &&
+      (guardPreventsEffects || bodyPreventsEffects) &&
       isEffectDoneToDefendingPokemon(queued.effect)
     ) {
-      this.addLog(`${defender.def.name} prevented an effect of the attack`);
+      this.addLog(`${defender!.def.name} prevented an effect of the attack`);
       return;
     }
     runEffect(queued.effect, context);
@@ -1263,7 +1410,7 @@ export class Game {
         if (total.amount > 0 && attacker)
           this.dealAttackDamage(
             { p: 1 - controller, slot: "active" }, total.amount,
-            { controller, attackerTypes: attacker.def.types, fromAttack: true },
+            { controller, attackerTypes: this.effectiveTypes(attacker), fromAttack: true },
             undefined, total.ignoreResistance
           );
         return;
@@ -1316,6 +1463,7 @@ export class Game {
         if (index < 0 || player.active) return;
         const promoted = player.bench.splice(index, 1)[0];
         player.active = promoted;
+        promoted.activeSince = this.turnNumber;
         this.addLog(`${player.name} promotes ${promoted.def.name}`, "switch", {
           player: operation.player,
           uid: promoted.card.uid,
@@ -1406,6 +1554,22 @@ export class Game {
     this.onChange();
   }
 
+  private trySurviveKO(ref: SlotRef, pokemon: PokemonInPlay): boolean {
+    const power = pokemon.def.power;
+    if (power?.kind !== "Poke-Body") return false;
+    const mod = power.modifiers?.find((m) => m.kind === "surviveKO");
+    if (!mod || mod.kind !== "surviveKO") return false;
+    if (pokemon.energy.length < mod.energyCost) return false;
+    const player = this.players[ref.p];
+    for (let i = 0; i < mod.energyCost; i++) player.discard.push(pokemon.energy.pop()!);
+    pokemon.damage = Math.max(0, this.effectiveHp(ref, pokemon) - mod.remainingHp);
+    this.addLog(`${power.name}: ${pokemon.def.name} survives with ${mod.remainingHp} HP`, "power", {
+      player: ref.p,
+      uid: pokemon.card.uid,
+    });
+    return true;
+  }
+
   private processKnockouts(): boolean {
     let any = false;
     for (let p = 0; p < 2; p++) {
@@ -1413,7 +1577,11 @@ export class Game {
       const knocked = this.allInPlay(p).filter(
         ({ ref, pokemon }) => pokemon.damage >= this.effectiveHp(ref, pokemon)
       );
-      for (const { pokemon } of knocked) {
+      for (const { ref, pokemon } of knocked) {
+        if (p !== this.current && !pokemon.koByPoison && this.trySurviveKO(ref, pokemon)) {
+          any = true;
+          continue;
+        }
         any = true;
         this.addLog(`${pokemon.def.name} is Knocked Out!`, "ko", {
           player: p,
@@ -1424,7 +1592,11 @@ export class Game {
         if (player.active === pokemon) player.active = null;
         player.bench = player.bench.filter((b) => b !== pokemon);
         const prizeTaker = this.players[1 - p];
-        const prizeCount = pokemon.def.isEx ? 2 : 1;
+        let prizeCount = pokemon.def.isEx ? 2 : 1;
+        if (pokemon.koByPoison && this.hasExtraPrizeOnPoisonKO(1 - p)) {
+          prizeCount += 1;
+          this.addLog(`Poison Knock Out — ${prizeTaker.name} takes 1 more prize card`, "prize");
+        }
         for (let i = 0; i < prizeCount && prizeTaker.prizes.length > 0; i++)
           prizeTaker.hand.push(prizeTaker.prizes.pop()!);
         this.addLog(
@@ -1443,6 +1615,7 @@ export class Game {
       if (player.active || player.bench.length === 0) continue;
       if (player.bench.length === 1) {
         player.active = player.bench.pop()!;
+        player.active.activeSince = this.turnNumber;
         this.addLog(`${player.name} promotes ${player.active.def.name}`, "switch", {
           player: p,
           uid: player.active.card.uid,
@@ -1507,6 +1680,8 @@ export class Game {
           uid: active.card.uid,
           amount: poisonDmg,
         });
+        if (active.damage >= this.effectiveHp({ p, slot: "active" }, active))
+          active.koByPoison = true;
       }
       if (active.burned) {
         if (!this.flipCoin(`Burn check for ${active.def.name}`)) {
@@ -1522,12 +1697,19 @@ export class Game {
         }
       }
       if (active.condition === "asleep") {
-        if (this.flipCoin(`Sleep check for ${active.def.name}`)) {
+        const requiredHeads = Math.max(
+          1,
+          modifierMax(this.players, { p, slot: "active" }, this.stadium, "sleepCheckCoins")
+        );
+        let wokeUp = true;
+        for (let flip = 0; flip < requiredHeads; flip++)
+          if (!this.flipCoin(`Sleep check for ${active.def.name}`)) wokeUp = false;
+        if (wokeUp) {
           active.condition = null;
           this.addLog(`${active.def.name} wakes up`, "status", { uid: active.card.uid });
         }
       }
-      if (active.condition === "paralyzed" && p === this.current) {
+      if (active.condition === "paralyzed" && p === this.current && active.conditionTurn !== this.turnNumber) {
         active.condition = null;
         this.addLog(`${active.def.name} is no longer Paralyzed`, "status", {
           uid: active.card.uid,
@@ -1541,6 +1723,14 @@ export class Game {
     this.turnNumber++;
     const me = this.players[this.current];
     me.turnsTaken++;
+    for (let p = 0; p < 2; p++)
+      for (const { pokemon } of this.allInPlay(p)) {
+        if (pokemon.grantedPower && this.turnNumber > pokemon.grantedPower.untilTurn)
+          pokemon.grantedPower = null;
+        for (const energy of pokemon.energy)
+          if (energy.provideOverride && this.turnNumber > energy.provideOverride.untilTurn)
+            delete energy.provideOverride;
+      }
     this.addLog(`— Turn ${this.turnNumber}: ${me.name} —`, "turn", { player: this.current });
     if (me.deck.length === 0) {
       this.declareWinner(1 - this.current, `${me.name} cannot draw a card`);

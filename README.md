@@ -11,7 +11,7 @@ npm run dev
 
 ## Rules implemented (EX era, 2006)
 
-- 60-card decks, max 4 copies per name (basic Energy exempt), 6 prize cards
+- 60-card decks, max 4 copies per name (basic Energy exempt), max 1 Gold Star Pokémon, 6 prize cards
 - Opening coin flip, mulligans (opponent draws 1 extra per mulligan), first player draws and may attack on turn 1
 - No evolution on either player's first turn; a Pokemon cannot evolve the turn it entered play or twice in one turn (Rare Candy bypasses, per pre-errata era ruling)
 - Pokemon-ex give up 2 prizes when Knocked Out
@@ -46,15 +46,15 @@ See [CARD_SCRIPTING.md](CARD_SCRIPTING.md) for the complete schema, effect op re
 
 ## Expert AI
 
-The browser runs expert information-set search in a Web Worker with a five-second budget shared across each turn. Hidden hand, deck, prize, and non-observer knowledge are redacted before crossing the worker boundary. Hidden-card worlds and future chance outcomes use independent samples, while publicly revealed opponent-hand cards remain pinned until they leave or are shuffled out of that hand. Follow-up actions and card-effect choices reuse the searched principal variation; some budget is reserved to replan when chance or newly observed information invalidates it.
+The browser runs one general-purpose expert policy for every deck. Its information-set search runs in a Web Worker with a five-second budget shared across each turn. Hidden hand, deck, prize, and non-observer knowledge are redacted before crossing the worker boundary. Hidden-card worlds and future chance outcomes use independent samples, while publicly revealed opponent-hand cards remain pinned until they leave or are shuffled out of that hand. Follow-up actions and card-effect choices reuse the searched principal variation; some budget is reserved to replan when chance or newly observed information invalidates it.
 
 ```sh
 npm run test:ai
-npm run benchmark:ai -- 5 1024 7 mirror
+npm run benchmark:ai -- 5 1024 all mirror
 npm run benchmark:ai:release
 ```
 
-Benchmark arguments are paired seeds, simulations per expert decision, deck archetypes, and an optional `mirror` mode. Mirror mode isolates policy strength by giving both AIs the same deck; omit it for the full cross-deck matrix. The release command runs the fixed 20-pair, 512-iteration, seven-deck mirror matrix and writes `benchmark-results/ai-latest.json`. Reports include effect choices, PV reuse, latency, failures, and per-match seeds.
+Benchmark arguments are paired seeds, simulations per expert decision, a numeric deck limit or `all`, and an optional `mirror` mode. Mirror mode isolates policy strength by giving both AIs the same deck; omit it for the full cross-deck matrix. The release command runs the fixed 20-pair, 512-iteration mirror matrix across every built-in deck and writes `benchmark-results/ai-latest.json`. Reports include effect choices, PV reuse, latency, failures, and per-match seeds.
 
 ## Architecture
 

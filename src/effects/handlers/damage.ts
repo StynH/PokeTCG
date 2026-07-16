@@ -17,6 +17,7 @@ function applyTargetedEffect(
     if (!pokemon) return;
     if (effect.op === "damage") {
       if (
+        !effect.immediate &&
         effect.applyWR !== false && ref.p === ctx.opponent && ref.slot === "active" &&
         ctx.addAttackDamage(effect.amount, effect.ignoreResistance)
       ) return;
@@ -71,7 +72,7 @@ defineEffect<{ op: "damageCounters"; count: number; target: EffectTarget }>({
   aiValue: (e) => e.count * 10 * 0.8,
 });
 
-defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType; energyTypes?: EnergyType[]; unusedCost?: number; maxBonus?: number }>({
+defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; energyType?: EnergyType; energyTypes?: EnergyType[]; unusedCost?: number; maxBonus?: number; specialOnly?: boolean; perType?: EnergyType }>({
   op: "damageScaled",
   run: (e, ctx) => {
     const me = ctx.players[ctx.controller];
@@ -79,20 +80,32 @@ defineEffect<{ op: "damageScaled"; base: number; amount: number; per: ScalePer; 
     const defender = ctx.getPokemon(defendingRef);
     const countEnergy = (energy: CardInstance[] | undefined): number => {
       if (!energy) return 0;
+      let list = energy.filter((c) => isEnergy(c.def));
+      if (e.specialOnly) list = list.filter((c) => !(c.def as EnergyCardDef).isBasic);
       if (e.energyTypes?.length)
-        return energy.filter((c) => isEnergy(c.def) && e.energyTypes!.some((t) => (c.def as EnergyCardDef).provides.includes(t))).length;
+        return list.filter((c) => e.energyTypes!.some((t) => (c.def as EnergyCardDef).provides.includes(t))).length;
       if (e.energyType)
-        return energy.filter((c) => isEnergy(c.def) && c.def.provides.includes(e.energyType!)).length;
-      return energy.length;
+        return list.filter((c) => (c.def as EnergyCardDef).provides.includes(e.energyType!)).length;
+      return list.length;
     };
+    const countBench = (bench: typeof me.bench): number =>
+      e.perType ? bench.filter((b) => b.def.types.includes(e.perType!)).length : bench.length;
     let count = 0;
     switch (e.per) {
       case "attackerEnergy":         count = countEnergy(me.active?.energy); break;
       case "defenderEnergy":         count = countEnergy(defender?.energy); break;
       case "defenderDamageCounters": count = (defender?.damage ?? 0) / 10; break;
       case "selfDamageCounters":     count = (me.active?.damage ?? 0) / 10; break;
-      case "yourBench":              count = me.bench.length; break;
-      case "oppBench":               count = ctx.players[ctx.opponent].bench.length; break;
+      case "yourBench":              count = countBench(me.bench); break;
+      case "oppBench":               count = countBench(ctx.players[ctx.opponent].bench); break;
+      case "selfDistinctBasicEnergyTypes": {
+        const src = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : me.active;
+        const types = new Set<EnergyType>();
+        for (const c of src?.energy ?? [])
+          if (isEnergy(c.def) && c.def.isBasic) for (const t of c.def.provides) types.add(t);
+        count = types.size;
+        break;
+      }
     }
     if (e.per === "attackerEnergy" && e.unusedCost) count = Math.max(0, count - e.unusedCost);
     let bonus = e.amount * count;

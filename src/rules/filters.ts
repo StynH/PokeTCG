@@ -11,5 +11,10 @@ export function matchesFilter(def: CardDef, filter: CardFilter): boolean {
   if (filter.maxHp !== undefined && (!isPokemon(def) || def.hp > filter.maxHp)) return false;
   if (filter.deltaOnly && (!isPokemon(def) || !def.isDelta)) return false;
   if (filter.notTrainer && def.supertype === "Trainer") return false;
+  if (filter.providesType && (!isEnergy(def) || !def.provides.includes(filter.providesType))) return false;
+  if (filter.providesAnyType && (!isEnergy(def) || !filter.providesAnyType.some((t) => def.provides.includes(t)))) return false;
+  if (filter.trainerKind && (def.supertype !== "Trainer" || def.kind !== filter.trainerKind)) return false;
+  if (filter.trainerKindExclude && def.supertype === "Trainer" && filter.trainerKindExclude.includes(def.kind)) return false;
+  if (filter.evolution && (!isPokemon(def) || def.stage === "Basic")) return false;
   return true;
 }

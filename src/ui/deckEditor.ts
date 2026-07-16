@@ -8,6 +8,7 @@ export type DeckList = Record<string, number>;
 const STORAGE_KEY = "poketcg-custom-decks";
 const DECK_SIZE = 60;
 const MAX_COPIES = 4;
+const MAX_GOLD_STARS = 1;
 
 const STAGE_ORDER: Record<Stage, number> = { Basic: 0, Stage1: 1, Stage2: 2 };
 const SECTION_LABELS: Record<Supertype, string> = { Pokemon: "Pokémon", Trainer: "Trainers", Energy: "Energy" };
@@ -89,18 +90,16 @@ export function openDeckEditor(
   }
 
   function goldStarCount(): number {
-    let count = 0;
-    for (const [id, n] of Object.entries(working)) {
+    return Object.entries(working).reduce((count, [id, copies]) => {
       const def = library[id];
-      if (def && isPokemon(def) && def.isGoldStar) count += n;
-    }
-    return count;
+      return count + (def && isPokemon(def) && def.isGoldStar ? copies : 0);
+    }, 0);
   }
 
   function canAdd(def: CardDef): boolean {
     if (totalCount() >= DECK_SIZE) return false;
+    if (isPokemon(def) && def.isGoldStar && goldStarCount() >= MAX_GOLD_STARS) return false;
     if (isEnergy(def) && def.isBasic) return true;
-    if (isPokemon(def) && def.isGoldStar && goldStarCount() >= 1) return false;
     return nameCount(def.name) < MAX_COPIES;
   }
 
@@ -216,9 +215,9 @@ export function openDeckEditor(
       flash(
         totalCount() >= DECK_SIZE
           ? "Deck is full (60 cards)"
-          : isPokemon(def) && def.isGoldStar && goldStarCount() >= 1
-            ? "Only 1 Pokémon ★ per deck"
-            : `Max ${MAX_COPIES} copies of ${def.name}`
+          : isPokemon(def) && def.isGoldStar && goldStarCount() >= MAX_GOLD_STARS
+            ? "Only 1 Gold Star Pokémon is allowed per deck"
+          : `Max ${MAX_COPIES} copies of ${def.name}`
       );
       return;
     }
@@ -302,7 +301,7 @@ export function openDeckEditor(
     if (totalCount() === 0) {
       const empty = el("div", "deck-empty");
       empty.appendChild(el("div", "deck-empty-title", "Empty deck"));
-      empty.appendChild(el("div", "deck-empty-hint", "Click cards in the library on the right to add them. A deck needs exactly 60 cards, max 4 copies per card (basic Energy unlimited), max 1 Pokémon ★."));
+      empty.appendChild(el("div", "deck-empty-hint", "Click cards in the library on the right to add them. A deck needs exactly 60 cards, max 4 copies per card (basic Energy unlimited), and only 1 Gold Star Pokémon."));
       deckColumn.appendChild(empty);
       return;
     }

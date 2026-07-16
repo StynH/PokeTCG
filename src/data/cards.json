@@ -1128,6 +1128,47 @@
     ]
   },
   {
+    "id": "styns-hitmonlee-star",
+    "name": "Styn's Hitmonlee",
+    "image": "/cards/styns-hitmonlee-star.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 80,
+    "types": ["Fighting"],
+    "isGoldStar": true,
+    "weakness": "Psychic",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Step Into the Ring",
+      "text": "Once during your turn (before your attack), if Styn's Hitmonlee ★ is on your Bench and your Active Pokémon has 2 or more damage counters on it, you may switch Styn's Hitmonlee ★ with your Active Pokémon. If you do, move 2 damage counters from that Pokémon to Styn's Hitmonlee ★. This power can't be used if Styn's Hitmonlee ★ is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [
+        {
+          "op": "conditional",
+          "cond": { "kind": "activeDamageCountersAtLeast", "n": 2 },
+          "then": [{ "op": "promoteSelfToActive", "moveDamageCounters": 2 }]
+        }
+      ]
+    },
+    "attacks": [
+      {
+        "name": "Perfect Counter",
+        "cost": ["Fighting", "Colorless"],
+        "text": "Does 20 damage plus 10 more damage for each damage counter on Styn's Hitmonlee ★. If Styn's Hitmonlee ★ has exactly 4 damage counters on it, this attack does 100 damage instead.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "selfDamageCountersExactly", "n": 4 },
+            "then": [{ "op": "damage", "amount": 100, "target": "defending" }],
+            "else": [{ "op": "damageScaled", "base": 20, "amount": 10, "per": "selfDamageCounters" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
     "id": "crawdaunt",
     "name": "Crawdaunt",
     "image": "/cards/048.png",
@@ -1543,7 +1584,8 @@
     "isBasic": false,
     "text": "If the Pokémon Darkness Energy is attached to attacks, the attack does 10 more damage to the Active Pokémon (before applying Weakness and Resistance). Ignore this effect if the Pokémon that Darkness Energy is attached to isn't Darkness. (Doesn't count as a basic Energy card.)",
     "damageRider": 10,
-    "damageRiderType": "Darkness"
+    "damageRiderType": "Darkness",
+    "damageRiderTarget": "active"
   },
   {
     "id": "regirock-ex",
@@ -1641,5 +1683,1561 @@
         "effects": [{ "op": "healAllYours", "amount": 10 }]
       }
     ]
+  },
+  {
+    "id": "dratini",
+    "name": "Dratini",
+    "image": "/cards/dratini.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Colorless"],
+    "weakness": "Colorless",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Call for Friends",
+        "cost": ["Colorless"],
+        "text": "Search your deck for up to 2 Basic Pokémon and put them onto your Bench. Shuffle your deck afterward.",
+        "effects": [{ "op": "searchToBench", "count": 2 }]
+      },
+      { "name": "Tail Slap", "cost": ["Colorless", "Colorless"], "damage": 20 }
+    ]
+  },
+  {
+    "id": "dragonair",
+    "name": "Dragonair",
+    "image": "/cards/dragonair.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Dratini",
+    "hp": 80,
+    "types": ["Colorless"],
+    "weakness": "Colorless",
+    "resistance": "Fighting",
+    "retreatCost": 2,
+    "attacks": [
+      {
+        "name": "Energy Loop",
+        "cost": ["Colorless", "Colorless"],
+        "damage": 30,
+        "text": "Search your discard pile for a basic Energy card and put it into your hand. If you do, return an Energy card attached to Dragonair to your hand.",
+        "effects": [
+          { "op": "retrieveEnergyToHand", "basicOnly": true, "thenIfDone": [{ "op": "returnSelfEnergyToHand", "count": 1 }] }
+        ]
+      },
+      {
+        "name": "Dragon Twister",
+        "cost": ["Fire", "Lightning", "Colorless"],
+        "text": "Flip 2 coins. For each heads, discard an Energy card attached to the Defending Pokémon.",
+        "effects": [{ "op": "discardDefenderEnergyPerHeads", "flips": 2, "damageIfAnyHeads": 40 }]
+      }
+    ]
+  },
+  {
+    "id": "dragonite-ex",
+    "name": "Dragonite ex",
+    "image": "/cards/dragonite-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Dragonair",
+    "hp": 120,
+    "types": ["Colorless"],
+    "isEx": true,
+    "resistance": "Fighting",
+    "retreatCost": 3,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Dragon Navigation",
+      "text": "Once during your turn (before your attack), you may choose a basic Energy card attached to 1 of your Pokémon and put it on top of your deck. If you do, search your discard pile for a basic Energy card and attach it to 1 of your Pokémon. This power can't be used if Dragonite ex is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [
+        {
+          "op": "moveSelfEnergyToDeckTop",
+          "basicOnly": true,
+          "thenIfDone": [{ "op": "attachEnergyFromDiscard", "basicOnly": true, "target": "anySelfChoice" }]
+        }
+      ]
+    },
+    "attacks": [
+      {
+        "name": "Sky Judgment",
+        "cost": ["Fire", "Lightning", "Colorless"],
+        "text": "Reveal the top 3 cards of your deck. This attack does 30 damage times the number of basic Energy cards you find there. Put those Energy cards into your hand. Discard the other cards.",
+        "effects": [{ "op": "revealTopDamagePerEnergy", "count": 3, "damagePer": 30 }]
+      }
+    ]
+  },
+  {
+    "id": "nidoran-m",
+    "name": "Nidoran ♂",
+    "image": "/cards/nidoran-m.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Grass"],
+    "weakness": "Psychic",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Poison Horn",
+        "cost": ["Grass"],
+        "damage": 10,
+        "text": "Flip a coin. If heads, the Defending Pokémon is now Poisoned.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "applyPoison", "target": "defending" }], "tails": [] }]
+      },
+      {
+        "name": "Desperate Charge",
+        "cost": ["Colorless", "Colorless"],
+        "damage": 30,
+        "text": "Nidoran ♂ does 10 damage to itself.",
+        "effects": [{ "op": "recoil", "amount": 10 }]
+      }
+    ]
+  },
+  {
+    "id": "nidorino",
+    "name": "Nidorino",
+    "image": "/cards/nidorino.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Nidoran ♂",
+    "hp": 80,
+    "types": ["Grass"],
+    "weakness": "Psychic",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Toxic Blood",
+      "text": "Whenever Nidorino is damaged by an opponent's attack (even if Nidorino is Knocked Out), put 1 damage counter on the Attacking Pokémon.",
+      "trigger": "onDamagedByAttack",
+      "effects": [{ "op": "damageCounters", "count": 1, "target": "defending" }]
+    },
+    "attacks": [
+      {
+        "name": "Rage Horn",
+        "cost": ["Grass", "Colorless"],
+        "text": "Does 20 damage plus 10 more damage for each damage counter on Nidorino.",
+        "effects": [{ "op": "damageScaled", "base": 20, "amount": 10, "per": "selfDamageCounters" }]
+      }
+    ]
+  },
+  {
+    "id": "nidoking-ex",
+    "name": "Nidoking ex",
+    "image": "/cards/nidoking-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Nidorino",
+    "hp": 120,
+    "types": ["Grass"],
+    "isEx": true,
+    "weakness": "Psychic",
+    "resistance": "Lightning",
+    "retreatCost": 3,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Poison Crown",
+      "text": "Whenever 1 of your opponent's Pokémon is Knocked Out by damage from Poison between turns, take 1 more Prize card.",
+      "modifiers": [{ "kind": "extraPrizeOnPoisonKO", "scope": "self" }]
+    },
+    "attacks": [
+      {
+        "name": "Royal Venom",
+        "cost": ["Grass", "Grass"],
+        "text": "The Defending Pokémon is now Poisoned. Put 2 damage counters instead of 1 on the Defending Pokémon between turns.",
+        "effects": [{ "op": "applyPoison", "target": "defending", "counters": 2 }]
+      },
+      {
+        "name": "King's Rampage",
+        "cost": ["Fighting", "Fighting", "Colorless"],
+        "damage": 60,
+        "text": "If the Defending Pokémon is Poisoned, discard all Energy cards attached to Nidoking ex. If you do, this attack does 120 damage instead of 60.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderStatus", "status": "poisoned" },
+            "then": [{ "op": "discardSelfEnergy", "count": "all", "thenIfDone": [{ "op": "damage", "amount": 60, "target": "defending" }] }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "gengar",
+    "name": "Gengar",
+    "image": "/cards/gengar.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Haunter",
+    "hp": 100,
+    "types": ["Psychic"],
+    "weakness": "Darkness",
+    "resistance": "Fighting",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Nightmare Gate",
+        "cost": ["Psychic"],
+        "text": "If the Defending Pokémon is Asleep, you may choose 1 of your opponent's Benched Pokémon and switch it with the Defending Pokémon. If you do, the new Defending Pokémon is now Asleep.",
+        "effects": [
+          { "op": "damage", "amount": 20, "target": "defending", "immediate": true },
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderStatus", "status": "asleep" },
+            "then": [{ "op": "gustOpponent", "optional": true, "thenIfSwitched": [{ "op": "applyCondition", "condition": "asleep", "target": "defending" }] }]
+          }
+        ]
+      },
+      {
+        "name": "Prize of Darkness",
+        "cost": ["Psychic", "Psychic", "Colorless"],
+        "damage": 40,
+        "text": "If your opponent has fewer Prize cards left than you, this attack does 40 damage plus 40 more damage.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "opponentFewerPrizes" },
+            "then": [{ "op": "damage", "amount": 40, "target": "defending" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "drowzee",
+    "name": "Drowzee",
+    "image": "/cards/drowzee.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Psychic"],
+    "weakness": "Psychic",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Hypnotic Suggestion",
+        "cost": ["Psychic"],
+        "text": "The Defending Pokémon is now Asleep. Your opponent draws a card.",
+        "effects": [
+          { "op": "applyCondition", "condition": "asleep", "target": "defending" },
+          { "op": "opponentDrawCard" }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "hypno",
+    "name": "Hypno",
+    "image": "/cards/hypno.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Drowzee",
+    "hp": 80,
+    "types": ["Psychic"],
+    "weakness": "Psychic",
+    "retreatCost": 2,
+    "attacks": [
+      {
+        "name": "Pendulum Trance",
+        "cost": ["Psychic"],
+        "damage": 10,
+        "text": "Flip a coin. If heads, the Defending Pokémon is now Asleep.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "applyCondition", "condition": "asleep", "target": "defending" }], "tails": [] }]
+      },
+      {
+        "name": "Dream Tax",
+        "cost": ["Psychic", "Colorless"],
+        "damage": 30,
+        "text": "If the Defending Pokémon is Asleep, your opponent discards a card from his or her hand.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderStatus", "status": "asleep" },
+            "then": [{ "op": "discardOpponentHand", "count": 1 }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "numel",
+    "name": "Numel",
+    "image": "/cards/numel.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 60,
+    "types": ["Fire"],
+    "weakness": "Water",
+    "retreatCost": 2,
+    "attacks": [
+      {
+        "name": "Kindle",
+        "cost": ["Colorless"],
+        "text": "Discard a card from your hand. If you do, search your discard pile for a Fire Energy card and put it into your hand.",
+        "effects": [
+          { "op": "discardFromHand", "count": 1 },
+          { "op": "retrieveEnergyToHand", "energyType": "Fire" }
+        ]
+      },
+      {
+        "name": "Stomp",
+        "cost": ["Fire", "Colorless"],
+        "damage": 20,
+        "text": "Flip a coin. If heads, this attack does 20 damage plus 10 more damage.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "damage", "amount": 10, "target": "defending" }], "tails": [] }]
+      }
+    ]
+  },
+  {
+    "id": "camerupt",
+    "name": "Camerupt",
+    "image": "/cards/camerupt.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Numel",
+    "hp": 90,
+    "types": ["Fire"],
+    "weakness": "Water",
+    "retreatCost": 3,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Magma Chamber",
+      "text": "Once during your turn (before your attack), you may choose a Fire Energy card in your discard pile and attach it to Camerupt. If you do, put 2 damage counters on Camerupt. This power can't be used if Camerupt is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [{ "op": "attachEnergyFromDiscard", "energyType": "Fire", "target": "self", "thenIfDone": [{ "op": "damageCounters", "count": 2, "target": "self" }] }]
+    },
+    "attacks": [
+      {
+        "name": "Volcanic Heave",
+        "cost": ["Fire"],
+        "text": "Discard the top 3 cards of your deck. This attack does 20 damage plus 20 more damage for each Fire Energy card you discarded.",
+        "effects": [
+          { "op": "discardTopForDamage", "count": 3, "base": 20, "damagePer": 20, "energyType": "Fire" }
+        ]
+      },
+      {
+        "name": "Caldera",
+        "cost": ["Fire", "Fire", "Fire"],
+        "damage": 80,
+        "text": "Camerupt does 30 damage to itself.",
+        "effects": [{ "op": "recoil", "amount": 30 }]
+      }
+    ]
+  },
+  {
+    "id": "chinchou",
+    "name": "Chinchou",
+    "image": "/cards/chinchou.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Water", "Lightning"],
+    "weakness": "Fighting",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Signal Search",
+        "cost": ["Colorless"],
+        "text": "Look at the top 5 cards of your deck. Choose a Water Energy card or a Lightning Energy card you find there and put it into your hand. Put the other cards back on top of your deck in any order.",
+        "effects": [{ "op": "peekTopDeck", "count": 5, "filter": { "providesAnyType": ["Water", "Lightning"] } }]
+      },
+      {
+        "name": "Spark",
+        "cost": ["Lightning"],
+        "text": "Choose 1 of your opponent's Benched Pokémon. This attack does 10 damage to that Pokémon. (Don't apply Weakness and Resistance for Benched Pokémon.)",
+        "effects": [{ "op": "damage", "amount": 10, "target": "opponentBenchChoice" }]
+      }
+    ]
+  },
+  {
+    "id": "lanturn",
+    "name": "Lanturn",
+    "image": "/cards/lanturn.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Chinchou",
+    "hp": 90,
+    "types": ["Water", "Lightning"],
+    "weakness": "Fighting",
+    "resistance": "Metal",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Deep Current",
+      "text": "Each basic Water Energy card attached to Lanturn provides both Water Energy and Lightning Energy but provides only 1 Energy at a time.",
+      "modifiers": [{ "kind": "energyProvidesExtra", "scope": "self", "fromType": "Water", "addType": "Lightning", "basicOnly": true }]
+    },
+    "attacks": [
+      {
+        "name": "Blackwater Pulse",
+        "cost": ["Colorless", "Colorless"],
+        "damage": 40,
+        "text": "If Lanturn has both Water Energy and Lightning Energy attached to it, the Defending Pokémon is now Confused.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "selfHasEnergyTypes", "types": ["Water", "Lightning"] },
+            "then": [{ "op": "applyCondition", "condition": "confused", "target": "defending" }]
+          }
+        ]
+      },
+      {
+        "name": "Abyssal Light",
+        "cost": ["Water", "Lightning", "Lightning"],
+        "text": "Choose 1 of your opponent's Pokémon that has any damage counters on it. This attack does 50 damage to that Pokémon. This attack's damage isn't affected by Weakness or Resistance.",
+        "effects": [{ "op": "damageDamagedOpponent", "amount": 50 }]
+      }
+    ]
+  },
+  {
+    "id": "swablu",
+    "name": "Swablu",
+    "image": "/cards/swablu.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Colorless"],
+    "weakness": "Lightning",
+    "resistance": "Fighting",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Cotton Shelter",
+        "cost": ["Colorless"],
+        "text": "During your opponent's next turn, any damage done to Swablu by attacks is reduced by 20 (after applying Weakness and Resistance).",
+        "effects": [{ "op": "protectNextTurn", "mode": "reduce", "amount": 20 }]
+      }
+    ]
+  },
+  {
+    "id": "altaria",
+    "name": "Altaria",
+    "image": "/cards/altaria.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Swablu",
+    "hp": 80,
+    "types": ["Colorless"],
+    "weakness": "Lightning",
+    "resistance": "Fighting",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Harmonize",
+      "text": "Once during your turn (before your attack), if Altaria is your Active Pokémon and has 2 or more different types of basic Energy attached to it, you may remove 1 damage counter from each of your Pokémon. This power can't be used if Altaria is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "requiresActive": true,
+      "effects": [
+        {
+          "op": "conditional",
+          "cond": { "kind": "selfDistinctBasicEnergyAtLeast", "n": 2 },
+          "then": [{ "op": "healAllYours", "amount": 10 }]
+        }
+      ]
+    },
+    "attacks": [
+      {
+        "name": "Chorus Wing",
+        "cost": ["Colorless"],
+        "text": "This attack does 20 damage times the number of different types of basic Energy attached to Altaria.",
+        "effects": [{ "op": "damageScaled", "base": 0, "amount": 20, "per": "selfDistinctBasicEnergyTypes" }]
+      }
+    ]
+  },
+  {
+    "id": "mareep",
+    "name": "Mareep",
+    "image": "/cards/mareep.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Lightning"],
+    "weakness": "Fighting",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Static Fleece",
+      "text": "If Mareep is your Active Pokémon and is damaged by an opponent's attack (even if Mareep is Knocked Out), flip a coin. If heads, the Attacking Pokémon is now Paralyzed.",
+      "trigger": "onDamagedByAttack",
+      "effects": [{ "op": "flip", "heads": [{ "op": "applyCondition", "condition": "paralyzed", "target": "defending" }], "tails": [] }]
+    },
+    "attacks": [
+      {
+        "name": "Gather Light",
+        "cost": ["Colorless"],
+        "text": "Search your deck for a Lightning Energy card, show it to your opponent, and put it into your hand. Shuffle your deck afterward.",
+        "effects": [{ "op": "searchDeck", "filter": { "supertype": "Energy", "providesType": "Lightning" }, "count": 1 }]
+      }
+    ]
+  },
+  {
+    "id": "flaaffy",
+    "name": "Flaaffy",
+    "image": "/cards/flaaffy.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Mareep",
+    "hp": 70,
+    "types": ["Lightning"],
+    "weakness": "Fighting",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Charge Counter",
+        "cost": ["Lightning"],
+        "text": "Put 1 charge counter on Flaaffy.",
+        "effects": [{ "op": "addCharge", "count": 1 }]
+      },
+      {
+        "name": "Static Release",
+        "cost": ["Colorless"],
+        "text": "Remove all charge counters from Flaaffy. This attack does 20 damage plus 30 more damage for each charge counter you removed.",
+        "effects": [{ "op": "dischargeForDamage", "base": 20, "damagePer": 30, "mode": "all" }]
+      }
+    ]
+  },
+  {
+    "id": "ampharos-ex",
+    "name": "Ampharos ex",
+    "image": "/cards/ampharos-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Flaaffy",
+    "hp": 120,
+    "types": ["Lightning"],
+    "isEx": true,
+    "weakness": "Fighting",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Charge Beacon",
+      "text": "Whenever you attach a Lightning Energy card from your hand to Ampharos ex, put 1 charge counter on Ampharos ex.",
+      "trigger": "onAttachBasicEnergy",
+      "triggerBasicEnergyType": "Lightning",
+      "effects": [{ "op": "addCharge", "count": 1 }]
+    },
+    "attacks": [
+      {
+        "name": "Signal Burst",
+        "cost": ["Colorless"],
+        "text": "Remove any number of charge counters from Ampharos ex. This attack does 20 damage for each charge counter you removed.",
+        "effects": [{ "op": "dischargeForDamage", "base": 0, "damagePer": 20, "mode": "choose" }]
+      },
+      {
+        "name": "Blackout",
+        "cost": ["Lightning", "Lightning", "Lightning"],
+        "damage": 70,
+        "text": "Your opponent can't play any Stadium cards from his or her hand during your opponent's next turn.",
+        "effects": [{ "op": "blockOpponentStadiumNextTurn" }]
+      }
+    ]
+  },
+  {
+    "id": "trapinch",
+    "name": "Trapinch",
+    "image": "/cards/trapinch.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Fighting"],
+    "weakness": "Grass",
+    "resistance": "Lightning",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Sinkhole",
+        "cost": ["Fighting", "Colorless"],
+        "text": "Choose 1 of your opponent's Benched Pokémon. Your opponent switches that Pokémon with the Defending Pokémon. The new Defending Pokémon can't retreat during your opponent's next turn.",
+        "effects": [{ "op": "gustOpponent", "thenIfSwitched": [{ "op": "lockDefending", "what": "retreat" }] }]
+      }
+    ]
+  },
+  {
+    "id": "vibrava",
+    "name": "Vibrava",
+    "image": "/cards/vibrava.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Trapinch",
+    "hp": 70,
+    "types": ["Fighting"],
+    "weakness": "Colorless",
+    "resistance": "Lightning",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Sand Screen",
+      "text": "As long as there is no Stadium card in play, prevent all effects of an attack, excluding damage, done to Vibrava.",
+      "modifiers": [{ "kind": "preventAttackEffects", "scope": "self", "requiresNoStadium": true }]
+    },
+    "attacks": [
+      {
+        "name": "Desert Signal",
+        "cost": ["Colorless", "Colorless"],
+        "damage": 20,
+        "text": "Search your deck for a Stadium card, show it to your opponent, and put it into your hand. Shuffle your deck afterward.",
+        "effects": [{ "op": "searchDeck", "filter": { "trainerKind": "Stadium" }, "count": 1 }]
+      },
+      {
+        "name": "Sonic Dust",
+        "cost": ["Fighting", "Colorless"],
+        "damage": 30,
+        "text": "If there is a Stadium card in play, the Defending Pokémon is now Confused.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "stadiumInPlay" },
+            "then": [{ "op": "applyCondition", "condition": "confused", "target": "defending" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "flygon-ex",
+    "name": "Flygon ex",
+    "image": "/cards/flygon-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Vibrava",
+    "hp": 120,
+    "types": ["Fighting"],
+    "isEx": true,
+    "weakness": "Colorless",
+    "resistance": ["Lightning", "Fighting"],
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Desert Dominion",
+      "text": "As long as Flygon ex is your Active Pokémon and there is a Stadium card in play, the Retreat Cost for each Defending Pokémon is Colorless more.",
+      "modifiers": [{ "kind": "retreatDelta", "amount": 1, "scope": "opponentPokemon", "sourceRequiresActive": true, "requiresStadium": true }]
+    },
+    "attacks": [
+      {
+        "name": "Sand Burial",
+        "cost": ["Fighting", "Colorless"],
+        "text": "You may discard a Stadium card in play. If you do, choose 1 of your opponent's Benched Pokémon. This attack does 40 damage to that Pokémon. (Don't apply Weakness and Resistance for Benched Pokémon.)",
+        "effects": [{ "op": "discardStadiumInPlay", "optional": true, "thenIfDone": [{ "op": "damage", "amount": 40, "target": "opponentBenchChoice" }] }]
+      },
+      {
+        "name": "Desert Storm",
+        "cost": ["Fighting", "Fighting", "Fighting"],
+        "damage": 70,
+        "text": "If there is no Stadium card in play, this attack does 70 damage plus 30 more damage.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "not", "of": { "kind": "stadiumInPlay" } },
+            "then": [{ "op": "damage", "amount": 30, "target": "defending" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "palkia-ex",
+    "name": "Palkia ex",
+    "image": "/cards/palkia-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 120,
+    "types": ["Water"],
+    "isEx": true,
+    "weakness": "Lightning",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Bent Space",
+      "text": "Once during your turn (before your attack), if Palkia ex is on your Bench, you may switch Palkia ex with your Active Pokémon. If you do, your opponent chooses 1 of his or her Benched Pokémon and switches it with the Defending Pokémon. This power can't be used if Palkia ex is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [{ "op": "promoteSelfToActive" }, { "op": "switchOpponent" }]
+    },
+    "attacks": [
+      {
+        "name": "Spatial Crush",
+        "cost": ["Water", "Water", "Water"],
+        "damage": 60,
+        "text": "If the Defending Pokémon's Retreat Cost is 2 or more, this attack does 60 damage plus 40 more damage.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderRetreatCostAtLeast", "n": 2 },
+            "then": [{ "op": "damage", "amount": 40, "target": "defending" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "dialga-ex",
+    "name": "Dialga ex",
+    "image": "/cards/dialga-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 120,
+    "types": ["Metal"],
+    "isEx": true,
+    "weakness": "Fire",
+    "resistance": "Psychic",
+    "retreatCost": 3,
+    "attacks": [
+      {
+        "name": "Rewind",
+        "cost": ["Metal", "Metal"],
+        "damage": 30,
+        "text": "Remove 3 damage counters from Dialga ex.",
+        "effects": [{ "op": "heal", "amount": 30, "target": "self" }]
+      },
+      {
+        "name": "Ages of Ruin",
+        "cost": ["Metal", "Metal", "Metal", "Colorless"],
+        "damage": 100,
+        "text": "Dialga ex can't use Ages of Ruin during your next turn.",
+        "effects": [{ "op": "lockAttack", "target": "self", "attackName": "Ages of Ruin" }]
+      }
+    ]
+  },
+  {
+    "id": "dark-mewtwo-ex",
+    "name": "Dark Mewtwo ex",
+    "image": "/cards/dark-mewtwo-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 110,
+    "types": ["Darkness"],
+    "isEx": true,
+    "weakness": "Psychic",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Psychic Contamination",
+      "text": "As long as Dark Mewtwo ex is your Active Pokémon, whenever your opponent attaches an Energy card from his or her hand to the Defending Pokémon, put 1 damage counter on that Pokémon.",
+      "trigger": "onOpponentActiveEnergyAttach",
+      "effects": [{ "op": "damageCounters", "count": 1, "target": "defending" }]
+    },
+    "attacks": [
+      {
+        "name": "Amnesia",
+        "cost": ["Psychic", "Psychic"],
+        "damage": 20,
+        "text": "Choose 1 of the Defending Pokémon's attacks. That Pokémon can't use that attack during your opponent's next turn.",
+        "effects": [{ "op": "lockAttack", "target": "defending", "chooseDefendingAttack": true }]
+      },
+      {
+        "name": "Mind Shatter",
+        "cost": ["Psychic", "Colorless", "Colorless"],
+        "damage": 40,
+        "text": "Your opponent reveals his or her hand. Choose a card you find there and discard it.",
+        "effects": [{ "op": "discardOpponentHandChosen", "count": 1 }]
+      }
+    ]
+  },
+  {
+    "id": "dark-steelix-ex",
+    "name": "Dark Steelix ex",
+    "image": "/cards/dark-steelix-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Onix",
+    "hp": 130,
+    "types": ["Darkness"],
+    "isEx": true,
+    "weakness": "Fire",
+    "resistance": "Grass",
+    "retreatCost": 4,
+    "attacks": [
+      {
+        "name": "Buried Alive",
+        "cost": ["Darkness", "Metal", "Colorless"],
+        "text": "Choose 1 of your opponent's Benched Pokémon and switch it with the Defending Pokémon. The new Defending Pokémon can't retreat during your opponent's next turn.",
+        "effects": [
+          { "op": "damage", "amount": 30, "target": "defending", "immediate": true },
+          { "op": "gustOpponent", "thenIfSwitched": [{ "op": "lockDefending", "what": "retreat" }] }
+        ]
+      },
+      {
+        "name": "Iron Grave",
+        "cost": ["Darkness", "Darkness", "Metal", "Metal"],
+        "text": "If the Defending Pokémon is Knocked Out by this attack, discard the top 3 cards of your opponent's deck.",
+        "effects": [
+          { "op": "damage", "amount": 100, "target": "defending", "immediate": true },
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderKnockedOut" },
+            "then": [{ "op": "millOpponent", "count": 3 }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "relicanth-ex",
+    "name": "Relicanth ex",
+    "image": "/cards/relicanth-ex.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 100,
+    "types": ["Water"],
+    "isEx": true,
+    "weakness": "Grass",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Ancient Slumber",
+      "text": "As long as Relicanth ex is your Active Pokémon, whenever your opponent flips a coin between turns for his or her Asleep Pokémon, your opponent flips 2 coins instead of 1. If either of them is tails, that Pokémon is still Asleep.",
+      "modifiers": [{ "kind": "sleepCheckCoins", "amount": 2, "scope": "opponentPokemon", "sourceRequiresActive": true }]
+    },
+    "attacks": [
+      {
+        "name": "Deep-sea Crush",
+        "cost": ["Water", "Water", "Colorless"],
+        "damage": 50,
+        "text": "If the Defending Pokémon is Asleep, this attack does 30 more damage. After doing damage, remove the Asleep Special Condition from the Defending Pokémon.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderStatus", "status": "asleep" },
+            "then": [
+              { "op": "damage", "amount": 30, "target": "defending" },
+              { "op": "removeCondition", "condition": "asleep", "target": "defending" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "regigigas",
+    "name": "Regigigas",
+    "image": "/cards/regigigas.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 120,
+    "types": ["Colorless"],
+    "isCrystal": true,
+    "resistance": "Fighting",
+    "retreatCost": 4,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Crystal Type",
+      "text": "Whenever you attach a Fighting, Water, or Metal Energy card from your hand to Regigigas, Regigigas's type becomes the same as that type of Energy until the end of the turn.",
+      "trigger": "onAttachBasicEnergy",
+      "triggerBasicEnergyTypes": ["Fighting", "Water", "Metal"],
+      "effects": [{ "op": "becomeEnergyType" }]
+    },
+    "attacks": [
+      {
+        "name": "Titanic Slam",
+        "cost": ["Water", "Fighting", "Fighting"],
+        "damage": 50,
+        "text": "Discard a Fighting Energy card from Regigigas.",
+        "effects": [{ "op": "discardSelfEnergy", "count": 1, "energyType": "Fighting" }]
+      },
+      {
+        "name": "Giant Impact",
+        "cost": ["Water", "Water", "Fighting", "Metal"],
+        "damage": 80,
+        "text": "If you have Registeel, Regirock and Regice in play, this attack's base damage is 110 instead of 80.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "namedPokemonInPlay", "names": ["Registeel", "Regirock", "Regice"] },
+            "then": [{ "op": "damage", "amount": 30, "target": "defending" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "ciphers-lugia",
+    "name": "Cipher's Lugia",
+    "image": "/cards/ciphers-lugia.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 80,
+    "types": ["Psychic", "Darkness"],
+    "weakness": "Lightning",
+    "resistance": "Fighting",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Overpowering Aura",
+      "text": "Whenever you attach a Psychic or Darkness Energy card from your hand to Cipher's Lugia, put 1 damage counter on your opponent's Active Pokémon.",
+      "trigger": "onAttachBasicEnergy",
+      "triggerBasicEnergyTypes": ["Psychic", "Darkness"],
+      "effects": [{ "op": "damageCounters", "count": 1, "target": "defending" }]
+    },
+    "attacks": [
+      {
+        "name": "Shadow Storm",
+        "cost": ["Psychic", "Psychic", "Darkness", "Colorless"],
+        "damage": 80,
+        "text": "You may discard a Darkness Energy attached to Cipher's Lugia. If you do, choose 1 of your opponent's Benched Pokémon. This attack also does 40 damage to that Pokémon. (Don't apply Weakness and Resistance for Benched Pokémon.)",
+        "effects": [
+          {
+            "op": "discardSelfEnergy",
+            "count": 1,
+            "energyType": "Darkness",
+            "optional": true,
+            "thenIfDone": [{ "op": "damage", "amount": 40, "target": "opponentBenchChoice" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "aggron",
+    "name": "Aggron",
+    "image": "/cards/aggron.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Lairon",
+    "hp": 110,
+    "types": ["Metal"],
+    "weakness": "Fire",
+    "resistance": "Grass",
+    "retreatCost": 4,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Fortified Armor",
+      "text": "Any damage done to Aggron by attacks from your opponent's Evolved Pokémon is reduced by 20 (after applying Weakness and Resistance).",
+      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "self", "requiresAttackerEvolved": true }]
+    },
+    "attacks": [
+      {
+        "name": "Iron Rampage",
+        "cost": ["Metal", "Metal", "Colorless", "Colorless"],
+        "text": "Does 60 damage plus 10 more damage for each of your Benched Metal Pokémon.",
+        "effects": [{ "op": "damageScaled", "base": 60, "amount": 10, "per": "yourBench", "perType": "Metal" }]
+      }
+    ]
+  },
+  {
+    "id": "alakazam",
+    "name": "Alakazam",
+    "image": "/cards/alakazam.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Kadabra",
+    "hp": 90,
+    "types": ["Psychic"],
+    "weakness": "Psychic",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Psychic Exchange",
+      "text": "Once during your turn (before your attack), you may move 1 damage counter from 1 of your Pokémon to another of your Pokémon. This power can't be used if Alakazam is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [{ "op": "moveDamageCounters", "count": 1, "ownOnly": true }]
+    },
+    "attacks": [
+      {
+        "name": "Mind Shock",
+        "cost": ["Psychic", "Colorless"],
+        "text": "This attack's damage isn't affected by Weakness or Resistance.",
+        "effects": [{ "op": "damage", "amount": 30, "target": "defending", "applyWR": false }]
+      },
+      {
+        "name": "Psywave",
+        "cost": ["Psychic", "Psychic", "Colorless"],
+        "text": "Does 20 damage plus 10 more damage for each Energy attached to the Defending Pokémon. You can't add more than 60 damage in this way.",
+        "effects": [{ "op": "damageScaled", "base": 20, "amount": 10, "per": "defenderEnergy", "maxBonus": 60 }]
+      }
+    ]
+  },
+  {
+    "id": "buried-relic-mew",
+    "name": "Buried Relic's Mew",
+    "image": "/cards/buried-relic-mew.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 70,
+    "types": ["Psychic"],
+    "weakness": "Psychic",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Shifting Melody",
+      "text": "Once during your turn (before your attack), you may move an Energy card attached to 1 of your Pokémon with Regirock, Regice, or Registeel in its name to Mew. If you do, Mew's type becomes the same as that Energy's type until the end of your turn. This power can't be used if Mew is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [{ "op": "shiftEnergyToSelf", "fromNames": ["Regirock", "Regice", "Registeel"], "becomeType": true }]
+    },
+    "attacks": [
+      {
+        "name": "Relic Pulse",
+        "cost": ["Colorless", "Colorless", "Colorless"],
+        "damage": 40,
+        "text": "If Mew has Fighting, Water, and Metal Energy attached to it, this attack does 40 damage plus 40 more damage and the Defending Pokémon is now Confused.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "selfHasEnergyTypes", "types": ["Fighting", "Water", "Metal"] },
+            "then": [
+              { "op": "damage", "amount": 40, "target": "defending" },
+              { "op": "applyCondition", "condition": "confused", "target": "defending" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "houndour",
+    "name": "Houndour",
+    "image": "/cards/houndour.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Darkness", "Fire"],
+    "weakness": "Water",
+    "resistance": "Psychic",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Smoldering Bite",
+        "cost": ["Darkness"],
+        "damage": 10,
+        "text": "Flip a coin. If heads, the Defending Pokémon is now Burned.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "applyBurn", "target": "defending" }], "tails": [] }]
+      }
+    ]
+  },
+  {
+    "id": "houndoom",
+    "name": "Houndoom",
+    "image": "/cards/houndoom.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Houndour",
+    "hp": 80,
+    "types": ["Darkness", "Fire"],
+    "weakness": "Water",
+    "resistance": "Psychic",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Black Flame",
+        "cost": ["Fire", "Darkness"],
+        "damage": 30,
+        "text": "The Defending Pokémon is now Burned.",
+        "effects": [{ "op": "applyBurn", "target": "defending" }]
+      },
+      {
+        "name": "Dark Fang",
+        "cost": ["Darkness", "Darkness", "Colorless"],
+        "damage": 40,
+        "text": "If the Defending Pokémon is affected by a Special Condition, your opponent discards a card from his or her hand.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderAnyStatus" },
+            "then": [{ "op": "discardOpponentHand", "count": 1 }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "linoone",
+    "name": "Linoone",
+    "image": "/cards/linoone.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Zigzagoon",
+    "hp": 70,
+    "types": ["Colorless"],
+    "weakness": "Fighting",
+    "retreatCost": 0,
+    "attacks": [
+      {
+        "name": "Quick Search",
+        "cost": ["Colorless"],
+        "text": "Search your deck for a Trainer card (excluding Supporter cards and Stadium cards), show it to your opponent, and put it into your hand. Shuffle your deck afterward.",
+        "effects": [{ "op": "searchDeck", "filter": { "supertype": "Trainer", "trainerKindExclude": ["Supporter", "Stadium"] }, "count": 1 }]
+      },
+      {
+        "name": "Dash Attack",
+        "cost": ["Colorless", "Colorless"],
+        "damage": 30,
+        "text": "You may switch Linoone with 1 of your Benched Pokémon.",
+        "effects": [{ "op": "switchSelf", "optional": true }]
+      }
+    ]
+  },
+  {
+    "id": "machamp",
+    "name": "Machamp",
+    "image": "/cards/machamp.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Machoke",
+    "hp": 110,
+    "types": ["Fighting"],
+    "weakness": "Psychic",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Final Stance",
+      "text": "If Machamp would be Knocked Out by an opponent's attack, you may discard 2 Energy cards attached to Machamp. If you do, Machamp is not Knocked Out and its remaining HP becomes 10 instead.",
+      "modifiers": [{ "kind": "surviveKO", "scope": "self", "energyCost": 2, "remainingHp": 10 }]
+    },
+    "attacks": [
+      {
+        "name": "Seismic Throw",
+        "cost": ["Fighting", "Fighting", "Colorless"],
+        "damage": 80,
+        "text": "Machamp does 20 damage to itself.",
+        "effects": [{ "op": "recoil", "amount": 20 }]
+      }
+    ]
+  },
+  {
+    "id": "magnezone",
+    "name": "Magnezone",
+    "image": "/cards/magnezone.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Magneton",
+    "hp": 110,
+    "types": ["Lightning", "Metal"],
+    "weakness": "Fire",
+    "resistance": "Grass",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Polarity Field",
+      "text": "Each basic Lightning Energy card attached to your Metal Pokémon provides Lightning Energy and Metal Energy but provides only 1 Energy at a time. (Has no effect other than providing Energy.)",
+      "modifiers": [{ "kind": "energyProvidesExtra", "scope": "yourPokemon", "fromType": "Lightning", "addType": "Metal", "basicOnly": true, "requiresHolderType": "Metal" }]
+    },
+    "attacks": [
+      {
+        "name": "Magnetic Pulse",
+        "cost": ["Lightning", "Metal", "Colorless"],
+        "damage": 50,
+        "text": "You may move a basic Energy card attached to Magnezone to 1 of your Benched Pokémon.",
+        "effects": [{ "op": "moveEnergy", "count": 1, "basicOnly": true, "fromSelf": true, "optional": true }]
+      }
+    ]
+  },
+  {
+    "id": "nidoqueen",
+    "name": "Nidoqueen",
+    "image": "/cards/nidoqueen.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Nidorina",
+    "hp": 110,
+    "types": ["Grass"],
+    "weakness": "Psychic",
+    "resistance": "Lightning",
+    "retreatCost": 3,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Royal Escort",
+      "text": "The Retreat Cost for each of your Nidoran ♂, Nidoran ♀, Nidorino, Nidorina, Nidoking, and Nidoqueen is Colorless less.",
+      "modifiers": [{ "kind": "retreatDelta", "amount": -1, "scope": "yourPokemon", "targetNameOneOf": ["Nidoran", "Nidorino", "Nidorina", "Nidoking", "Nidoqueen"] }]
+    },
+    "attacks": [
+      {
+        "name": "Royal Command",
+        "cost": ["Grass", "Grass", "Colorless"],
+        "damage": 40,
+        "text": "If you have Nidoking in play, this attack does 40 damage plus 30 more damage.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "namedPokemonInPlay", "names": ["Nidoking"] },
+            "then": [{ "op": "damage", "amount": 30, "target": "defending" }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "nidoran-f",
+    "name": "Nidoran ♀",
+    "image": "/cards/nidoran-f.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 50,
+    "types": ["Grass"],
+    "weakness": "Psychic",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Call for Family",
+        "cost": ["Colorless"],
+        "text": "Search your deck for a Basic Pokémon named Nidoran ♂ or Nidoran ♀ and put it onto your Bench. Shuffle your deck afterward.",
+        "effects": [{ "op": "searchToBench", "count": 1, "filter": { "supertype": "Pokemon", "stage": "Basic", "nameContains": "Nidoran" } }]
+      },
+      {
+        "name": "Poison Sting",
+        "cost": ["Grass"],
+        "damage": 10,
+        "text": "Flip a coin. If heads, the Defending Pokémon is now Poisoned.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "applyPoison", "target": "defending" }], "tails": [] }]
+      }
+    ]
+  },
+  {
+    "id": "nidorina",
+    "name": "Nidorina",
+    "image": "/cards/nidorina.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Nidoran ♀",
+    "hp": 80,
+    "types": ["Grass"],
+    "weakness": "Psychic",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Family Care",
+      "text": "Once during your turn (before your attack), you may remove 1 damage counter from 1 of your Nidoran ♂, Nidoran ♀, Nidorino, Nidorina, Nidoking, or Nidoqueen. This power can't be used if Nidorina is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [{ "op": "heal", "amount": 10, "target": "anySelfChoice", "restrictNames": ["Nidoran", "Nidorino", "Nidorina", "Nidoking", "Nidoqueen"] }]
+    },
+    "attacks": [
+      {
+        "name": "Double Kick",
+        "cost": ["Grass", "Colorless"],
+        "text": "Flip 2 coins. This attack does 20 damage times the number of heads.",
+        "effects": [{ "op": "damagePerHeads", "flips": 2, "amount": 20, "target": "defending" }]
+      }
+    ]
+  },
+  {
+    "id": "noctowl",
+    "name": "Noctowl",
+    "image": "/cards/noctowl.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Hoothoot",
+    "hp": 80,
+    "types": ["Colorless"],
+    "weakness": "Lightning",
+    "resistance": "Fighting",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Night Watch",
+      "text": "Once during your turn (before your attack), if Noctowl is your Active Pokémon, you may look at the top 2 cards of your deck, choose 1 of them, and put it into your hand. Put the other card on the bottom of your deck. This power can't be used if Noctowl is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "requiresActive": true,
+      "effects": [{ "op": "lookTopChooseToHand", "count": 2 }]
+    },
+    "attacks": [
+      {
+        "name": "Silent Wing",
+        "cost": ["Colorless", "Colorless"],
+        "damage": 30
+      }
+    ]
+  },
+  {
+    "id": "porygon-z",
+    "name": "Porygon-Z",
+    "image": "/cards/porygon-z.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Porygon2",
+    "hp": 100,
+    "types": ["Colorless"],
+    "weakness": "Fighting",
+    "retreatCost": 2,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Energy Rewrite",
+      "text": "Once during your turn (before your attack), you may choose 1 Special Energy card attached to Porygon-Z. Then, choose a type. Until the end of your turn, that Energy card provides 1 Energy of that type instead of its usual type. This power can't be used if Porygon-Z is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [{ "op": "rewriteEnergyType" }]
+    },
+    "attacks": [
+      {
+        "name": "Data Crash",
+        "cost": ["Colorless", "Colorless", "Colorless"],
+        "text": "Does 20 damage plus 20 more damage for each Special Energy card attached to Porygon-Z. You can't add more than 60 damage in this way.",
+        "effects": [{ "op": "damageScaled", "base": 20, "amount": 20, "per": "attackerEnergy", "specialOnly": true, "maxBonus": 60 }]
+      }
+    ]
+  },
+  {
+    "id": "porygon2",
+    "name": "Porygon2",
+    "image": "/cards/porygon2.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Porygon",
+    "hp": 70,
+    "types": ["Colorless"],
+    "weakness": "Fighting",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Data Reorder",
+      "text": "Once during your turn (before your attack), you may look at the top 3 cards of your deck and put them back on top of your deck in any order. This power can't be used if Porygon2 is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "effects": [{ "op": "reorderTopDeck", "count": 3 }]
+    },
+    "attacks": [
+      {
+        "name": "Signal Beam",
+        "cost": ["Colorless", "Colorless"],
+        "damage": 20,
+        "text": "Flip a coin. If heads, the Defending Pokémon is now Confused.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "applyCondition", "condition": "confused", "target": "defending" }], "tails": [] }]
+      }
+    ]
+  },
+  {
+    "id": "raichu",
+    "name": "Raichu",
+    "image": "/cards/raichu.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Pikachu",
+    "hp": 80,
+    "types": ["Lightning"],
+    "weakness": "Fighting",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Voltage Link",
+      "text": "As long as Pichu is on your Bench, Raichu's attacks do 10 more damage to the Defending Pokémon (before applying Weakness and Resistance).",
+      "modifiers": [{ "kind": "damagePlus", "amount": 10, "scope": "self", "requiresNamedInPlay": ["Pichu"] }]
+    },
+    "attacks": [
+      {
+        "name": "Chain Lightning",
+        "cost": ["Lightning", "Colorless"],
+        "damage": 30,
+        "text": "This attack does 10 damage to 1 of your opponent's Benched Pokémon. (Don't apply Weakness and Resistance for Benched Pokémon.)",
+        "effects": [{ "op": "damage", "amount": 10, "target": "opponentBenchChoice", "applyWR": false }]
+      },
+      {
+        "name": "Thunder Burst",
+        "cost": ["Lightning", "Lightning", "Colorless"],
+        "damage": 60,
+        "text": "Discard a Lightning Energy card attached to Raichu.",
+        "effects": [{ "op": "discardSelfEnergy", "count": 1, "energyType": "Lightning" }]
+      }
+    ]
+  },
+  {
+    "id": "sableye",
+    "name": "Sableye",
+    "image": "/cards/sableye.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 70,
+    "types": ["Darkness"],
+    "resistance": "Psychic",
+    "retreatCost": 1,
+    "power": {
+      "kind": "Poke-Power",
+      "name": "Dark Bargain",
+      "text": "Once during your turn (before your attack), if Sableye is your Active Pokémon, you may discard a Darkness Energy card from your hand. If you do, search your discard pile for a Trainer card (excluding Supporter cards and Stadium cards), show it to your opponent, and put it into your hand. This power can't be used if Sableye is affected by a Special Condition.",
+      "usable": true,
+      "oncePerTurn": true,
+      "requiresActive": true,
+      "effects": [
+        { "op": "discardFromHand", "count": 1, "energyType": "Darkness" },
+        { "op": "retrieveFromDiscard", "filter": { "supertype": "Trainer", "trainerKindExclude": ["Supporter", "Stadium"] } }
+      ]
+    },
+    "attacks": [
+      {
+        "name": "Shadow Sneak",
+        "cost": ["Darkness", "Colorless"],
+        "damage": 30,
+        "ignoreResistance": true,
+        "text": "This attack's damage isn't affected by Resistance."
+      }
+    ]
+  },
+  {
+    "id": "sealeo",
+    "name": "Sealeo",
+    "image": "/cards/sealeo.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Spheal",
+    "hp": 80,
+    "types": ["Water"],
+    "weakness": "Metal",
+    "retreatCost": 2,
+    "attacks": [
+      {
+        "name": "Gather Ice",
+        "cost": ["Water"],
+        "text": "Search your discard pile for up to 2 Water Energy cards, show them to your opponent, and put them into your hand.",
+        "effects": [{ "op": "retrieveEnergyToHand", "energyType": "Water", "count": 2 }]
+      },
+      {
+        "name": "Aurora Beam",
+        "cost": ["Water", "Water", "Colorless"],
+        "damage": 40
+      }
+    ]
+  },
+  {
+    "id": "snorlax",
+    "name": "Snorlax",
+    "image": "/cards/snorlax.png",
+    "supertype": "Pokemon",
+    "stage": "Stage1",
+    "evolvesFrom": "Munchlax",
+    "hp": 100,
+    "types": ["Colorless"],
+    "weakness": "Fighting",
+    "retreatCost": 4,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Deep Sleep",
+      "text": "As long as Snorlax is Asleep, any damage done to Snorlax by attacks is reduced by 30 (after applying Weakness and Resistance).",
+      "modifiers": [{ "kind": "damageMinus", "amount": 30, "scope": "self", "requiresHolderAsleep": true }]
+    },
+    "attacks": [
+      {
+        "name": "Resting Press",
+        "cost": ["Colorless", "Colorless", "Colorless"],
+        "damage": 70,
+        "text": "Snorlax is now Asleep.",
+        "effects": [{ "op": "applyCondition", "condition": "asleep", "target": "self" }]
+      }
+    ]
+  },
+  {
+    "id": "spheal",
+    "name": "Spheal",
+    "image": "/cards/spheal.png",
+    "supertype": "Pokemon",
+    "stage": "Basic",
+    "hp": 60,
+    "types": ["Water"],
+    "weakness": "Metal",
+    "retreatCost": 1,
+    "attacks": [
+      {
+        "name": "Defense Curl",
+        "cost": ["Colorless"],
+        "text": "Flip a coin. If heads, prevent all damage done to Spheal by attacks during your opponent's next turn.",
+        "effects": [{ "op": "flip", "heads": [{ "op": "protectNextTurn", "mode": "preventAll" }], "tails": [] }]
+      },
+      {
+        "name": "Ice Ball",
+        "cost": ["Water", "Colorless"],
+        "damage": 20
+      }
+    ]
+  },
+  {
+    "id": "walrein",
+    "name": "Walrein",
+    "image": "/cards/walrein.png",
+    "supertype": "Pokemon",
+    "stage": "Stage2",
+    "evolvesFrom": "Sealeo",
+    "hp": 110,
+    "types": ["Water"],
+    "weakness": "Metal",
+    "retreatCost": 3,
+    "power": {
+      "kind": "Poke-Body",
+      "name": "Frozen Hide",
+      "text": "Any damage done to Walrein by attacks from your opponent's Pokémon that has any Special Energy cards attached to it is reduced by 20 (after applying Weakness and Resistance).",
+      "modifiers": [{ "kind": "damageMinus", "amount": 20, "scope": "self", "requiresAttackerSpecialEnergy": true }]
+    },
+    "attacks": [
+      {
+        "name": "Frozen Current",
+        "cost": ["Water", "Water", "Colorless"],
+        "damage": 50,
+        "text": "If the Defending Pokémon has 2 or more Energy attached to it, discard an Energy card attached to the Defending Pokémon.",
+        "effects": [
+          {
+            "op": "conditional",
+            "cond": { "kind": "defenderEnergyAtLeast", "n": 2 },
+            "then": [{ "op": "discardOpponentEnergy", "count": 1 }]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "energy-recycle-system",
+    "name": "Energy Recycle System",
+    "image": "/cards/energy-recycle-system.jpg",
+    "supertype": "Trainer",
+    "kind": "Item",
+    "text": "Search your discard pile for basic Energy cards. You may either show 1 basic Energy card to your opponent and put it into your hand, or show 3 basic Energy cards to your opponent and shuffle them into your deck.",
+    "effects": [{ "op": "recycleBasicEnergy" }]
+  },
+  {
+    "id": "life-herb",
+    "name": "Life Herb",
+    "image": "/cards/life-herb.jpg",
+    "supertype": "Trainer",
+    "kind": "Item",
+    "text": "Flip a coin. If heads, choose 1 of your Pokémon (excluding Pokémon-ex). Remove all Special Conditions and 6 damage counters from that Pokémon (all if there are less than 6).",
+    "effects": [
+      {
+        "op": "flip",
+        "heads": [{ "op": "heal", "amount": 60, "target": "anySelfChoice", "excludeEx": true, "clearConditions": true }],
+        "tails": []
+      }
+    ]
+  },
+  {
+    "id": "mt-moon",
+    "name": "Mt. Moon",
+    "image": "/cards/mt-moon.jpg",
+    "supertype": "Trainer",
+    "kind": "Stadium",
+    "text": "Any Pokémon (both yours and your opponent's) with maximum HP less than 70 can't use any Poké-Powers.",
+    "effects": [],
+    "modifiers": [{ "kind": "disablePowersBelowHp", "scope": "allPokemon", "hp": 70 }]
+  },
+  {
+    "id": "space-center",
+    "name": "Space Center",
+    "image": "/cards/space-center.jpg",
+    "supertype": "Trainer",
+    "kind": "Stadium",
+    "text": "Ignore Poké-Bodies for all Basic Pokémon in play (both yours and your opponent's) (excluding Pokémon-ex and Pokémon that has an owner in its name).",
+    "effects": [],
+    "modifiers": [{ "kind": "disableBodies", "scope": "allPokemon", "basicOnly": true, "excludeEx": true, "excludeOwnerName": true }]
+  },
+  {
+    "id": "meteor-falls",
+    "name": "Meteor Falls",
+    "image": "/cards/meteor-falls.jpg",
+    "supertype": "Trainer",
+    "kind": "Stadium",
+    "text": "Each player's Active Evolved Pokémon (excluding Pokémon-ex) can use any attack from its Basic Pokémon or its Stage 1 Evolution card. (You still have to pay for that attack's Energy cost.)",
+    "effects": [],
+    "modifiers": [{ "kind": "borrowUnderneathAttacks", "scope": "allPokemon", "excludeEx": true }]
+  },
+  {
+    "id": "heal-energy",
+    "name": "Heal Energy",
+    "image": "/cards/heal-energy.jpg",
+    "supertype": "Energy",
+    "provides": ["Colorless"],
+    "isBasic": false,
+    "text": "Heal Energy provides Colorless Energy. When you attach this card from your hand to 1 of your Pokémon, remove 1 damage counter and all Special Conditions from that Pokémon. If Heal Energy is attached to Pokémon-ex, Heal Energy has no effect other than providing Energy.",
+    "onAttachExcludesEx": true,
+    "onAttachEffects": [{ "op": "heal", "amount": 10, "target": "self", "clearConditions": true }]
   }
 ]

@@ -4,13 +4,11 @@ import type { CardDef } from "../src/model/types";
 import { buildDeck, buildLibrary } from "../src/model/loader";
 import { Game } from "../src/engine/game";
 import { chooseAction, chooseOption } from "../src/ai/simpleAI";
-import { findProfile } from "../src/ai/profiles";
 
 const library = buildLibrary(cardsJson as CardDef[]);
 const decks = decksJson as Record<string, Record<string, number>>;
 const deckNames = Object.keys(decks);
 const gameCount = Number(process.argv[2] ?? 8);
-const profiles = [findProfile(process.argv[3] ?? "Balanced"), findProfile(process.argv[4] ?? "Balanced")] as const;
 
 const mechanics = new Map<string, number>();
 const trackMechanic = (log: string[], needle: string, key: string) => {
@@ -30,8 +28,8 @@ for (let g = 0; g < gameCount; g++) {
   );
   let steps = 0;
   while (game.phase === "playing" && steps++ < 4000) {
-    if (game.pending) game.resolvePending(chooseOption(game.pending, profiles[game.pending.player]));
-    else game.perform(chooseAction(game, profiles[game.current]));
+    if (game.pending) game.resolvePending(chooseOption(game.pending));
+    else game.perform(chooseAction(game));
   }
   if (game.phase !== "finished" || game.winner === null) {
     failures++;

@@ -21,8 +21,9 @@ export interface PowerDef {
   usable?: boolean;
   oncePerTurn?: boolean;
   requiresActive?: boolean;
-  trigger?: "onPlayFromHand" | "onAttachBasicEnergy" | "onDamagedByAttack";
+  trigger?: "onPlayFromHand" | "onAttachBasicEnergy" | "onDamagedByAttack" | "onOpponentActiveEnergyAttach";
   triggerBasicEnergyType?: EnergyType;
+  triggerBasicEnergyTypes?: EnergyType[];
   effects?: Effect[];
   modifiers?: Modifier[];
 }
@@ -43,6 +44,7 @@ export interface PokemonCardDef {
   types: EnergyType[];
   isEx?: boolean;
   isGoldStar?: boolean;
+  isCrystal?: boolean;
   isDelta?: boolean;
   playableAsEnergy?: boolean;
   weakness?: EnergyType;
@@ -77,9 +79,12 @@ export interface EnergyCardDef {
   attachExcludesEx?: boolean;
   damageRider?: number;
   damageRiderType?: EnergyType;
+  damageRiderTarget?: "active";
   scramble?: boolean;
   deltaOnly?: boolean;
   modifiers?: Modifier[];
+  onAttachEffects?: Effect[];
+  onAttachExcludesEx?: boolean;
 }
 
 export type CardDef = PokemonCardDef | TrainerCardDef | EnergyCardDef;
@@ -87,6 +92,7 @@ export type CardDef = PokemonCardDef | TrainerCardDef | EnergyCardDef;
 export interface CardInstance {
   uid: number;
   def: CardDef;
+  provideOverride?: { types: EnergyType[]; untilTurn: number };
 }
 
 export type CardLibrary = Record<string, CardDef>;

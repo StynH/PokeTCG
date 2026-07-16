@@ -1,5 +1,6 @@
-import type { CardInstance, PokemonCardDef } from "../model/cards";
+import type { CardInstance, PokemonCardDef, PowerDef } from "../model/cards";
 import type { Condition } from "../model/effects";
+import type { EnergyType } from "../model/energy";
 
 export interface PokemonInPlay {
   card: CardInstance;
@@ -9,6 +10,7 @@ export interface PokemonInPlay {
   underneath: CardInstance[];
   damage: number;
   condition: Condition | null;
+  conditionTurn: number;
   poisonCounters: number;
   burned: boolean;
   enteredTurn: number;
@@ -16,7 +18,13 @@ export interface PokemonInPlay {
   powerUsedTurn: number | null;
   guard: { mode: "preventAll" | "reduce"; amount: number; untilTurn: number } | null;
   locks: { attack?: number; retreat?: number };
+  attackLocks: Record<string, number>;
   attackBoost: { amount: number; attackName?: string; usableTurn: number } | null;
+  chargeCounters: number;
+  activeSince: number | null;
+  grantedPower: { power: PowerDef; untilTurn: number } | null;
+  typeOverride: { types: EnergyType[]; untilTurn: number } | null;
+  koByPoison?: boolean;
 }
 
 export interface PlayerState {
@@ -27,9 +35,11 @@ export interface PlayerState {
   prizes: CardInstance[];
   active: PokemonInPlay | null;
   bench: PokemonInPlay[];
+  lostZone: CardInstance[];
   attachedEnergyTurn: number | null;
   supporterTurn: number | null;
   retreatedTurn: number | null;
+  noStadiumTurn: number | null;
   turnsTaken: number;
 }
 
@@ -54,6 +64,7 @@ export function makePokemonInPlay(card: CardInstance, turn: number): PokemonInPl
     underneath: [],
     damage: 0,
     condition: null,
+    conditionTurn: 0,
     poisonCounters: 0,
     burned: false,
     enteredTurn: turn,
@@ -61,7 +72,12 @@ export function makePokemonInPlay(card: CardInstance, turn: number): PokemonInPl
     powerUsedTurn: null,
     guard: null,
     locks: {},
+    attackLocks: {},
     attackBoost: null,
+    chargeCounters: 0,
+    activeSince: null,
+    grantedPower: null,
+    typeOverride: null,
   };
 }
 
@@ -72,6 +88,9 @@ export function clonePokemon(p: PokemonInPlay): PokemonInPlay {
     underneath: [...p.underneath],
     guard: p.guard ? { ...p.guard } : null,
     locks: { ...p.locks },
+    attackLocks: { ...p.attackLocks },
+    grantedPower: p.grantedPower ? { ...p.grantedPower } : null,
+    typeOverride: p.typeOverride ? { ...p.typeOverride, types: [...p.typeOverride.types] } : null,
   };
 }
 
@@ -82,6 +101,7 @@ export function clonePlayer(player: PlayerState): PlayerState {
     hand: [...player.hand],
     discard: [...player.discard],
     prizes: [...player.prizes],
+    lostZone: [...player.lostZone],
     active: player.active ? clonePokemon(player.active) : null,
     bench: player.bench.map(clonePokemon),
   };

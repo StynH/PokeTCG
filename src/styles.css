@@ -370,6 +370,15 @@ body {
     0 10px 24px rgba(0, 0, 0, 0.55);
 }
 
+.tile-crystal {
+  border-color: transparent;
+  background-clip: padding-box;
+  box-shadow:
+    0 0 0 2.5px #a8ecff,
+    0 0 24px rgba(150, 224, 255, 0.6),
+    0 10px 24px rgba(0, 0, 0, 0.55);
+}
+
 .in-play.card-lg:hover,
 .in-play.card-md:hover {
   transform: translateY(-4px) scale(1.35);
@@ -484,6 +493,15 @@ body {
   bottom: 5px;
   right: 6px;
   width: 20px;
+  height: auto;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.8));
+}
+
+.crystal-chip {
+  position: absolute;
+  bottom: 5px;
+  right: 6px;
+  width: 22px;
   height: auto;
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.8));
 }
@@ -934,6 +952,12 @@ body {
   color: #8ff0e6;
 }
 
+.detail-tag-crystal {
+  background: linear-gradient(120deg, rgba(168, 236, 255, 0.28), rgba(120, 190, 255, 0.22));
+  border-color: rgba(168, 236, 255, 0.55);
+  color: #bfeeff;
+}
+
 .detail-stat {
   display: flex;
   align-items: center;
@@ -1303,7 +1327,7 @@ body {
   gap: 14px;
 }
 
-.manage-profiles-btn {
+.menu-link-btn {
   font-family: inherit;
   font-size: 12px;
   color: #aab4e8;
@@ -1314,90 +1338,9 @@ body {
   padding: 2px 6px;
 }
 
-.manage-profiles-btn:hover {
+.menu-link-btn:hover {
   color: #eef2ff;
   text-decoration: underline;
-}
-
-.profile-modal {
-  width: 440px;
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.editor-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.editor-title-row .modal-title {
-  margin-bottom: 0;
-}
-
-.editor-close {
-  font-family: inherit;
-  font-size: 14px;
-  color: #aab4e8;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 0 2px;
-}
-
-.editor-close:hover {
-  color: #eef2ff;
-}
-
-.editor-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.editor-divider {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.slider-row {
-  display: grid;
-  grid-template-columns: 100px 1fr 44px;
-  align-items: center;
-  gap: 12px;
-}
-
-.slider-row label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  opacity: 0.6;
-}
-
-.slider-row input[type="range"] {
-  width: 100%;
-  accent-color: #7c8cff;
-  margin: 0;
-}
-
-.slider-value {
-  font-size: 12px;
-  text-align: right;
-  opacity: 0.8;
-  font-variant-numeric: tabular-nums;
-}
-
-.editor-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.editor-status {
-  margin-left: auto;
-  font-size: 12px;
-  opacity: 0.7;
 }
 
 .start-btn {
@@ -2117,7 +2060,7 @@ body {
 
 .tp-row {
   display: grid;
-  grid-template-columns: 24px 1.1fr 1fr 1.3fr 28px;
+  grid-template-columns: 24px 1.1fr 1.3fr 28px;
   gap: 8px;
   align-items: center;
 }
@@ -2172,7 +2115,7 @@ body {
   cursor: default;
 }
 
-.manage-profiles-btn:disabled {
+.menu-link-btn:disabled {
   opacity: 0.35;
   cursor: default;
   text-decoration: none;
@@ -2776,6 +2719,378 @@ body {
 
 .standings-table .champ-row .st-name {
   color: #ffd23f;
+}
+
+.champ-hero {
+  position: relative;
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  padding: 22px 24px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 210, 63, 0.45);
+  background: linear-gradient(135deg, rgba(255, 180, 40, 0.16), rgba(12, 16, 32, 0.86) 55%);
+}
+
+.champ-hero-glow {
+  position: absolute;
+  inset: -60% 40% 40% -20%;
+  background: radial-gradient(circle, rgba(255, 210, 63, 0.28), transparent 65%);
+  pointer-events: none;
+  animation: champHeroGlow 3.6s ease-in-out infinite;
+}
+
+@keyframes champHeroGlow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.champ-hero-crest {
+  position: relative;
+  flex-shrink: 0;
+  width: 96px;
+  height: 96px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 210, 63, 0.5);
+  background: radial-gradient(circle at 50% 35%, rgba(255, 210, 63, 0.3), rgba(12, 16, 32, 0.7));
+}
+
+.champ-hero-trophy {
+  font-size: 52px;
+  filter: drop-shadow(0 4px 14px rgba(255, 180, 40, 0.55));
+}
+
+.champ-hero-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.champ-hero-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  opacity: 0.65;
+}
+
+.champ-hero-name {
+  font-size: 34px;
+  font-weight: 900;
+  line-height: 1.1;
+  background: linear-gradient(90deg, #ffd23f, #ff8c42);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.champ-hero-deck {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.champ-hero-story {
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.85;
+  margin-top: 6px;
+  max-width: 70ch;
+}
+
+.champ-hero-ace {
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.7;
+  max-width: 70ch;
+}
+
+.champ-hero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  margin: 10px 0 4px;
+}
+
+.champ-hero-stat-value {
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.champ-hero-stat-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  opacity: 0.55;
+}
+
+.champ-hero-path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.champ-path-node {
+  border-radius: 10px;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  min-width: 92px;
+}
+
+.champ-path-node.won {
+  border-color: rgba(94, 234, 160, 0.35);
+  background: rgba(94, 234, 160, 0.08);
+}
+
+.champ-path-node.lost {
+  border-color: rgba(255, 107, 107, 0.35);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.champ-path-round {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.55;
+}
+
+.champ-path-foe {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.champ-path-score {
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.hof-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 4px;
+}
+
+.hof-row {
+  display: grid;
+  grid-template-columns: 40px minmax(150px, 1.4fr) 2fr 64px;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.hof-row:last-child {
+  border-bottom: none;
+}
+
+.hof-rank {
+  font-size: 12px;
+  font-weight: 800;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.hof-info {
+  min-width: 0;
+}
+
+.hof-name {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hof-sub {
+  font-size: 10px;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hof-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.hof-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ff6b35, #ffd23f);
+}
+
+.hof-value {
+  font-size: 14px;
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.attacks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.attack-card {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attack-name {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.attack-owner {
+  font-size: 10px;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attack-numbers {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.attack-num {
+  text-align: center;
+}
+
+.attack-num-value {
+  font-size: 14px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.attack-num-label {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.5;
+}
+
+.race-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+}
+
+.race-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 160px) 1fr 60px;
+  gap: 12px;
+  align-items: center;
+}
+
+.race-name {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.race-track {
+  position: relative;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.race-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255, 107, 53, 0.85), rgba(255, 210, 63, 0.85));
+}
+
+.race-ko {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  line-height: 20px;
+  font-size: 9px;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.race-value {
+  font-size: 13px;
+  font-weight: 800;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-cloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.card-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+.card-chip-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.card-chip-count {
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 720px) {
+  .champ-hero {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .champ-hero-stats,
+  .champ-hero-path {
+    justify-content: center;
+  }
+
+  .hof-row {
+    grid-template-columns: 30px 1fr 56px;
+  }
+
+  .hof-track {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .champ-hero-glow {
+    animation: none;
+  }
 }
 .ai-thinking {
   margin: 8px 0;

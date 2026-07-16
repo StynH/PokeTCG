@@ -1,7 +1,7 @@
 import type { CardDef, CardInstance, PokemonCardDef } from "../model/cards";
 import type { Effect, CardFilter, EffectTarget } from "../model/effects";
 import type { EnergyType } from "../model/energy";
-import type { PlayerState, PokemonInPlay, SlotRef } from "../core/state";
+import type { PlayerState, PokemonInPlay, SlotRef, StadiumState } from "../core/state";
 import type { ChoiceOption } from "../core/choice";
 import type { EffectFrame, QueuedOperation } from "../core/operations";
 import type { EventCat } from "../core/events";
@@ -30,6 +30,7 @@ export interface EffectContext {
     ownerIndex: number
   ): { provides: EnergyType[]; count: number };
   effectiveHp(ref: SlotRef, pokemon: PokemonInPlay): number;
+  effectiveRetreatCost(ref: SlotRef, pokemon: PokemonInPlay): number;
   conditionsPrevented(ref: SlotRef): boolean;
   matchesFilter(def: CardDef, filter: CardFilter): boolean;
   rareCandyPairs(
@@ -72,4 +73,10 @@ export interface EffectContext {
   queueEffects(effects: Effect[]): void;
   queueOperation(operation: QueuedOperation): void;
   command(name: string, payload: unknown): QueuedOperation;
+
+  stadium(): StadiumState | null;
+  removeStadium(): void;
+  endTurn(): void;
+  blockStadiumNextTurn(player: number): void;
+  benchFromDeck(cardUid: number): boolean;
 }

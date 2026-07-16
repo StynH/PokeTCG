@@ -2,10 +2,8 @@ import { SeededRng } from "../core/rng";
 import type { Decision, Game, InformationState } from "../engine/game";
 import { Game as GameEngine } from "../engine/game";
 import type { CardLibrary } from "../model/cards";
-import type { AIProfile } from "./profiles";
-import { BALANCED } from "./profiles";
 import { determinize } from "./determinize";
-import { chooseActionSeeded, evaluatePosition, heuristicActionScore } from "./simpleAI";
+import { chooseSetupAwareAction, evaluatePosition, heuristicActionScore } from "./simpleAI";
 
 export interface SearchConfig {
   seed: number;
@@ -54,62 +52,43 @@ function decisionCategory(decision: Decision): string {
   return decision.kind === "choice" ? "choice" : decision.action.type;
 }
 
-function decisionPrior(game: Game, decision: Decision, profile: AIProfile): number {
+function decisionPrior(game: Game, decision: Decision): number {
   if (decision.kind === "choice") {
     const option = game.pending?.options.find((candidate, index) =>
       (candidate.id ?? `option:${index}`) === decision.optionId
     );
     return Math.tanh((option?.aiScore ?? 0) / 100);
   }
-  return Math.tanh(heuristicActionScore(game, decision.action, profile.weights) / 100);
+  return Math.tanh(heuristicActionScore(game, decision.action) / 100);
 }
 
-function leafValue(game: Game, observer: number, profile: AIProfile): number {
+function leafValue(game: Game, observer: number): number {
   if (game.phase === "finished") return game.winner === observer ? 1 : -1;
-  const base = Math.tanh(evaluatePosition(game, observer, BALANCED.weights) / 1800);
-  const styled = Math.tanh(evaluatePosition(game, observer, profile.weights) / 1800);
-  const preference = Math.max(-0.03, Math.min(0.03, styled - base));
-  return Math.max(-1, Math.min(1, base + preference));
+  return Math.tanh(evaluatePosition(game, observer) / 1800);
 }
 
 function chooseRolloutDecision(
   game: Game,
-  observer: number,
-  profile: AIProfile,
   rng: SeededRng
 ): Decision | null {
   const point = game.getDecisionPoint();
   if (!point || point.options.length === 0) return null;
-  const actorProfile = point.actor === observer ? profile : BALANCED;
-  const scored = point.options.map((option) => ({
-    decision: option.decision,
-    score: decisionPrior(game, option.decision, actorProfile) + rng.next() * 0.025,
-  }));
-  if (scored[0].decision.kind === "choice")
+  if (point.options[0].decision.kind === "choice") {
+    const scored = point.options.map((option) => ({
+      decision: option.decision,
+      score: decisionPrior(game, option.decision) + rng.next() * 0.025,
+    }));
     return scored.sort((a, b) => b.score - a.score)[0].decision;
-
-  // A Pokemon turn is a sequence, not a single move. Ending it before using
-  // positive setup actions makes otherwise deep rollouts strategically blind.
-  const setup = scored
-    .filter(({ decision }) =>
-      decision.kind === "action" &&
-      decision.action.type !== "attack" &&
-      decision.action.type !== "pass"
-    )
-    .sort((a, b) => b.score - a.score)[0];
-  if (setup && setup.score > 0.18) return setup.decision;
-
-  return scored
-    .filter(({ decision }) => decision.kind === "action" && decision.action.type === "attack")
-    .sort((a, b) => b.score - a.score)[0]?.decision ??
-    scored.find(({ decision }) => decision.kind === "action" && decision.action.type === "pass")?.decision ??
-    scored.sort((a, b) => b.score - a.score)[0].decision;
+  }
+  return {
+    kind: "action",
+    action: chooseSetupAwareAction(game, rng),
+  };
 }
 
 function rollout(
   game: Game,
   observer: number,
-  profile: AIProfile,
   rng: SeededRng,
   rootTurn: number,
   config: Required<Pick<SearchConfig, "maxDecisions" | "turnHorizon">>,
@@ -120,11 +99,11 @@ function rollout(
     decisions++ < config.maxDecisions &&
     game.turnNumber - rootTurn < config.turnHorizon
   ) {
-    const decision = chooseRolloutDecision(game, observer, profile, rng);
+    const decision = chooseRolloutDecision(game, rng);
     if (!decision) break;
     game.applyDecision(decision);
   }
-  return leafValue(game, observer, profile);
+  return leafValue(game, observer);
 }
 
 function principalVariation(root: Node): string[] {
@@ -142,7 +121,6 @@ function principalVariation(root: Node): string[] {
 export function searchDecision(
   information: InformationState,
   library: CardLibrary,
-  profile: AIProfile,
   config: SearchConfig
 ): SearchResult {
   const started = performance.now();
@@ -168,13 +146,7 @@ export function searchDecision(
     const game = GameEngine.fromSnapshot(
       determinize(information, library, hiddenSeed), library, chanceSeed
     );
-    const guided = game.pending
-      ? chooseRolloutDecision(
-          game, information.observer, BALANCED, new SeededRng(chanceSeed ^ 0x85ebca6b)
-        )
-      : { kind: "action", action: chooseActionSeeded(
-          game, BALANCED, new SeededRng(chanceSeed ^ 0x85ebca6b), 2
-        ) } as Decision;
+    const guided = chooseRolloutDecision(game, new SeededRng(chanceSeed ^ 0x85ebca6b));
     if (guided) {
       const key = decisionKey(game, guided);
       guidanceVotes.set(key, (guidanceVotes.get(key) ?? 0) + 1);
@@ -204,13 +176,12 @@ export function searchDecision(
       const point = game.getDecisionPoint();
       if (!point || point.options.length === 0) break;
       const legal = new Map<string, { decision: Decision; prior: number }>();
-      const actorProfile = point.actor === information.observer ? profile : BALANCED;
       for (const option of point.options) {
         const key = decisionKey(game, option.decision);
         if (!legal.has(key))
           legal.set(key, {
             decision: option.decision,
-            prior: decisionPrior(game, option.decision, actorProfile),
+            prior: decisionPrior(game, option.decision),
           });
       }
       for (const [key] of legal) {
@@ -270,7 +241,6 @@ export function searchDecision(
     const value = rollout(
       game,
       information.observer,
-      profile,
       simulationRng,
       rootTurn,
       limits,

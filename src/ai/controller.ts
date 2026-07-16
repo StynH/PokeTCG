@@ -1,6 +1,5 @@
 import type { Decision, Game } from "../engine/game";
-import { heuristicActionScore } from "./simpleAI";
-import type { AIProfile } from "./profiles";
+import { chooseSetupAwareAction, isPlannedDecisionReusable } from "./simpleAI";
 import type { SearchRequest, WorkerResponse } from "./workerProtocol";
 import {
   matchPlannedDecision,
@@ -52,7 +51,6 @@ export class AIController {
 
   async chooseDecision(
     game: Game,
-    profile: AIProfile,
     config: ChooseConfig
   ): Promise<ChosenDecision> {
     const revision = game.revision;
@@ -70,7 +68,7 @@ export class AIController {
     const planned = this.plannedActor === point.actor
       ? matchPlannedDecision(point, this.plannedDecisions[0])
       : null;
-    if (planned) {
+    if (planned && isPlannedDecisionReusable(game, planned)) {
       this.plannedDecisions.shift();
       return { decision: planned, revision, iterations: 0, elapsedMs: 0 };
     }
@@ -79,7 +77,6 @@ export class AIController {
     if (point.options.length === 1)
       return { decision: point.options[0].decision, revision, iterations: 0, elapsedMs: 0 };
 
-    const actions = game.getLegalActions();
     let fallback: Decision;
     if (game.pending) {
       let bestIndex = 0;
@@ -87,11 +84,7 @@ export class AIController {
         if (game.pending.options[i].aiScore > game.pending.options[bestIndex].aiScore) bestIndex = i;
       fallback = point.options[bestIndex].decision;
     } else {
-      fallback = { kind: "action", action: actions.reduce((best, action) =>
-          heuristicActionScore(game, action, profile.weights) > heuristicActionScore(game, best, profile.weights)
-            ? action
-            : best
-        ) };
+      fallback = { kind: "action", action: chooseSetupAwareAction(game) };
     }
 
     if (this.remainingTurnBudgetMs <= 100)
@@ -107,7 +100,6 @@ export class AIController {
       type: "search",
       requestId,
       information: game.getInformationState(point.actor),
-      profile,
       seed: config.seed,
       deadlineMs: searchBudget,
     };

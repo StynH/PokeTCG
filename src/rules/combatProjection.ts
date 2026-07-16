@@ -14,7 +14,7 @@ export interface CombatProjectionContext {
   totalEnergyUnits(pokemon: PokemonInPlay, owner: number): number;
 }
 
-export function intrinsicAttackValue(attack: AttackDef, attacker?: PokemonInPlay): number {
+export function intrinsicAttackDamage(attack: AttackDef, attacker?: PokemonInPlay): number {
   const boost = attacker?.attackBoost;
   let damage = (attack.damage ?? 0) +
     (boost && (!boost.attackName || boost.attackName === attack.name) ? boost.amount : 0);
@@ -24,23 +24,36 @@ export function intrinsicAttackValue(attack: AttackDef, attacker?: PokemonInPlay
       case "damageCounters": damage += effect.count * 10; break;
       case "damagePerHeads": damage += effect.flips * effect.amount * 0.5; break;
       case "damagePerFlipsPerEnergy": damage = Math.max(damage, effect.base + effect.amount * 1.5); break;
-      case "recoil": damage -= effect.amount * 0.35; break;
-      case "applyCondition":
-      case "applyPoison":
-      case "applyBurn": damage += 20; break;
-      case "nextAttackBonus": damage += effect.amount * 0.6; break;
       case "flip":
         damage += effect.heads.reduce((total, nested) => {
           if (nested.op === "damage") return total + nested.amount * 0.5;
           if (nested.op === "damageCounters") return total + nested.count * 5;
-          if (nested.op === "applyCondition" || nested.op === "applyPoison" || nested.op === "applyBurn")
-            return total + 10;
           return total;
         }, 0);
         break;
     }
   }
   return Math.max(0, damage);
+}
+
+export function intrinsicAttackValue(attack: AttackDef, attacker?: PokemonInPlay): number {
+  let value = intrinsicAttackDamage(attack, attacker);
+  for (const effect of attack.effects ?? []) {
+    switch (effect.op) {
+      case "recoil": value -= effect.amount * 0.35; break;
+      case "applyCondition":
+      case "applyPoison":
+      case "applyBurn": value += 20; break;
+      case "nextAttackBonus": value += effect.amount * 0.6; break;
+      case "flip":
+        value += effect.heads.reduce((total, nested) =>
+          nested.op === "applyCondition" || nested.op === "applyPoison" || nested.op === "applyBurn"
+            ? total + 10
+            : total, 0);
+        break;
+    }
+  }
+  return Math.max(0, value);
 }
 
 export function projectAttackDamage(
@@ -50,20 +63,34 @@ export function projectAttackDamage(
   owner: number,
   defender: PokemonInPlay | null
 ): number {
-  let damage = intrinsicAttackValue(attack, attacker);
+  let damage = intrinsicAttackDamage(attack, attacker);
   for (const effect of attack.effects ?? []) {
     if (effect.op === "damageScaled") {
+      const specialCount = (pokemon: PokemonInPlay | null): number =>
+        pokemon ? pokemon.energy.filter((c) => isEnergy(c.def) && !c.def.isBasic).length : 0;
+      const benchCount = (o: number): number =>
+        effect.perType
+          ? ctx.players[o].bench.filter((b) => b.def.types.includes(effect.perType!)).length
+          : ctx.players[o].bench.length;
       const scale = (() => {
         switch (effect.per) {
-          case "attackerEnergy": return ctx.totalEnergyUnits(attacker, owner);
-          case "defenderEnergy": return defender ? ctx.totalEnergyUnits(defender, 1 - owner) : 0;
+          case "attackerEnergy": return effect.specialOnly ? specialCount(attacker) : ctx.totalEnergyUnits(attacker, owner);
+          case "defenderEnergy": return effect.specialOnly ? specialCount(defender) : (defender ? ctx.totalEnergyUnits(defender, 1 - owner) : 0);
           case "defenderDamageCounters": return defender ? Math.floor(defender.damage / 10) : 0;
           case "selfDamageCounters": return Math.floor(attacker.damage / 10);
-          case "yourBench": return ctx.players[owner].bench.length;
-          case "oppBench": return ctx.players[1 - owner].bench.length;
+          case "yourBench": return benchCount(owner);
+          case "oppBench": return benchCount(1 - owner);
+          case "selfDistinctBasicEnergyTypes": {
+            const types = new Set<string>();
+            for (const c of attacker.energy)
+              if (isEnergy(c.def) && c.def.isBasic) for (const t of c.def.provides) types.add(t);
+            return types.size;
+          }
         }
       })();
-      damage = Math.max(damage, effect.base + scale * effect.amount);
+      let bonus = (scale ?? 0) * effect.amount;
+      if (effect.maxBonus !== undefined) bonus = Math.min(bonus, effect.maxBonus);
+      damage = Math.max(damage, effect.base + bonus);
     }
     if (effect.op === "damageIfDefenderNoEnergy" && defender?.energy.length === 0)
       damage += effect.bonus;
@@ -96,6 +123,7 @@ export function projectAttackDamage(
     for (const card of attacker.energy) {
       if (!isEnergy(card.def) || !card.def.damageRider) continue;
       if (card.def.damageRiderType && !attacker.def.types.includes(card.def.damageRiderType)) continue;
+      if (card.def.damageRiderTarget === "active" && !attackCanDamageActive(attack)) continue;
       damage += card.def.damageRider;
     }
   }
@@ -123,10 +151,41 @@ export function projectAttackDamage(
       ctx.players,
       defenderRef,
       ctx.stadium,
-      attacker.def.stage === "Basic",
-      attacker.def.isEx ?? false
+      {
+        isBasic: attacker.def.stage === "Basic",
+        isEx: attacker.def.isEx ?? false,
+        isEvolved: attacker.def.stage !== "Basic",
+        hasSpecialEnergy: attacker.energy.some((c) => isEnergy(c.def) && !c.def.isBasic),
+      }
     ));
   return damage;
+}
+
+export function projectAttackValue(
+  ctx: CombatProjectionContext,
+  attack: AttackDef,
+  attacker: PokemonInPlay,
+  owner: number,
+  defender: PokemonInPlay | null
+): number {
+  const nonDamageValue = intrinsicAttackValue(attack, attacker) - intrinsicAttackDamage(attack, attacker);
+  return Math.max(0, projectAttackDamage(ctx, attack, attacker, owner, defender) + nonDamageValue);
+}
+
+function attackCanDamageActive(attack: AttackDef): boolean {
+  if ((attack.damage ?? 0) > 0) return true;
+  return attack.effects?.some((effect) => {
+    if (effect.op === "damage")
+      return effect.amount > 0 && (effect.target === "defending" || effect.target === "anyOpponentChoice");
+    if (effect.op === "damageScaled" || effect.op === "damagePerHeads" || effect.op === "damagePerFlipsPerEnergy")
+      return true;
+    if (effect.op === "flip")
+      return effect.heads.some((nested) =>
+        nested.op === "damage" && nested.amount > 0 &&
+        (nested.target === "defending" || nested.target === "anyOpponentChoice")
+      );
+    return false;
+  }) ?? false;
 }
 
 function findRef(

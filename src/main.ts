@@ -5,19 +5,6 @@ import type { CardDef } from "./model/types";
 import { buildDeck, buildLibrary, validateDeck } from "./model/loader";
 import { Game } from "./engine/game";
 import { AIController } from "./ai/controller";
-import {
-  type AIProfile,
-  BALANCED,
-  PRESETS,
-  WEIGHT_KEYS,
-  WEIGHT_LABELS,
-  allProfiles,
-  deleteCustomProfile,
-  findProfile,
-  loadCustomProfiles,
-  mixWeights,
-  saveCustomProfile,
-} from "./ai/profiles";
 import { render, resetEventFeed, setRerender, setStepHandler, uiState } from "./ui/render";
 import { loadCustomDecks, openDeckEditor } from "./ui/deckEditor";
 import {
@@ -40,7 +27,6 @@ const root = document.getElementById("app")!;
 
 let game: Game | null = null;
 let aiPlayers = new Set<number>([AI]);
-let aiProfiles: [AIProfile, AIProfile] = [BALANCED, BALANCED];
 let aiTimer: number | null = null;
 let aiAbort: AbortController | null = null;
 let aiInFlight = false;
@@ -50,7 +36,6 @@ let lastConfig: {
   deckOne: string;
   deckTwo: string;
   mode: GameMode;
-  profiles: [AIProfile, AIProfile];
   names?: [string, string];
 } | null = null;
 let suddenDeathScheduled = false;
@@ -64,7 +49,6 @@ function startGame(
   deckOne: string,
   deckTwo: string,
   mode: GameMode,
-  profiles: [AIProfile, AIProfile],
   prizeCount = 6,
   namesOverride?: [string, string]
 ): void {
@@ -79,17 +63,16 @@ function startGame(
     if (!validation.valid) console.warn(`Deck "${name}":`, validation.problems);
   }
   aiPlayers = mode === "aivai" ? new Set([0, 1]) : new Set([AI]);
-  aiProfiles = profiles;
   const names: [string, string] =
     namesOverride ??
     (mode === "aivai"
-      ? [`${profiles[0].name} (AI)`, `${profiles[1].name} (AI)`]
-      : ["You", `${profiles[1].name} (AI)`]);
+      ? ["AI Red", "AI Blue"]
+      : ["You", "AI"]);
   lastTurnSeen = 0;
   suddenDeathScheduled = false;
   uiState.paused = false;
   resetEventFeed();
-  lastConfig = { deckOne, deckTwo, mode, profiles, names: namesOverride };
+  lastConfig = { deckOne, deckTwo, mode, names: namesOverride };
   currentPrizeCount = prizeCount;
   statsHarvested = false;
   game = new Game(library, decks[0], decks[1], names, Date.now(), prizeCount);
@@ -142,7 +125,7 @@ function update(): void {
     suddenDeathScheduled = true;
     const config = lastConfig;
     window.setTimeout(
-      () => startGame(config.deckOne, config.deckTwo, config.mode, config.profiles, 1, config.names),
+      () => startGame(config.deckOne, config.deckTwo, config.mode, 1, config.names),
       3000
     );
     return;
@@ -193,7 +176,7 @@ async function stepAI(): Promise<void> {
   uiState.thinking = !game.pending;
   update();
   try {
-    const chosen = await aiController.chooseDecision(searchedGame, aiProfiles[actor], {
+    const chosen = await aiController.chooseDecision(searchedGame, {
       seed: (searchedGame.turnNumber * 65537 + searchedGame.revision * 257 + actor * 17) >>> 0,
       timeBudgetMs: 5000,
       signal: aiAbort.signal,
@@ -247,152 +230,6 @@ function fillSelect(select: HTMLSelectElement, entries: Array<{ value: string; l
   if (entries.some((e) => e.value === previous)) select.value = previous;
 }
 
-function profileEntries(withNone: string | null): Array<{ value: string; label: string }> {
-  const entries = allProfiles().map((p) => ({ value: p.name, label: p.name }));
-  return withNone === null ? entries : [{ value: "", label: withNone }, ...entries];
-}
-
-function openProfileEditor(onProfilesChanged: () => void): void {
-  const overlay = el("div", "overlay", document.body);
-  const modal = el("div", "modal glass profile-modal", overlay);
-  overlay.onclick = (e) => {
-    if (e.target === overlay) overlay.remove();
-  };
-
-  const titleRow = el("div", "editor-title-row", modal);
-  const title = el("div", "modal-title", titleRow);
-  title.textContent = "AI Profiles";
-  const closeX = el("button", "editor-close", titleRow);
-  closeX.textContent = "✕";
-  closeX.onclick = () => overlay.remove();
-
-  const topGrid = el("div", "editor-grid", modal);
-  const editSelect = el("select");
-  labeledField("Edit profile", editSelect, topGrid);
-  const nameInput = el("input");
-  nameInput.type = "text";
-  nameInput.placeholder = "AI name, e.g. Bill";
-  labeledField("Name", nameInput, topGrid);
-
-  const mixGrid = el("div", "editor-grid", modal);
-  const baseSelect = el("select");
-  labeledField("Base strategy", baseSelect, mixGrid);
-  const mixSelect = el("select");
-  labeledField("Mix with", mixSelect, mixGrid);
-
-  const sliderRow = (labelText: string, max: number, parent: HTMLElement) => {
-    const wrap = el("div", "slider-row", parent);
-    const label = el("label", "", wrap);
-    label.textContent = labelText;
-    const slider = el("input", "", wrap);
-    slider.type = "range";
-    slider.min = "0";
-    slider.max = String(max);
-    const value = el("span", "slider-value", wrap);
-    const showValue = () => (value.textContent = `${slider.value}%`);
-    slider.addEventListener("input", showValue);
-    return { wrap, slider, showValue };
-  };
-
-  const ratio = sliderRow("Mix ratio", 100, modal);
-  ratio.slider.value = "50";
-  ratio.showValue();
-  ratio.wrap.style.display = "none";
-
-  el("div", "editor-divider", modal);
-
-  const weightSliders = {} as Record<(typeof WEIGHT_KEYS)[number], ReturnType<typeof sliderRow>>;
-  for (const key of WEIGHT_KEYS) {
-    weightSliders[key] = sliderRow(WEIGHT_LABELS[key], 200, modal);
-  }
-
-  const setWeights = (weights: AIProfile["weights"]) => {
-    for (const key of WEIGHT_KEYS) {
-      weightSliders[key].slider.value = String(Math.round(weights[key] * 100));
-      weightSliders[key].showValue();
-    }
-  };
-  setWeights(BALANCED.weights);
-
-  const applyMix = () => {
-    const base = findProfile(baseSelect.value);
-    setWeights(
-      mixSelect.value
-        ? mixWeights(base.weights, findProfile(mixSelect.value).weights, Number(ratio.slider.value) / 100)
-        : base.weights
-    );
-  };
-  baseSelect.onchange = applyMix;
-  mixSelect.onchange = () => {
-    ratio.wrap.style.display = mixSelect.value ? "" : "none";
-    applyMix();
-  };
-  ratio.slider.addEventListener("input", applyMix);
-  editSelect.onchange = () => {
-    if (!editSelect.value) {
-      nameInput.value = "";
-      setWeights(BALANCED.weights);
-      return;
-    }
-    const profile = findProfile(editSelect.value);
-    nameInput.value = profile.name;
-    setWeights(profile.weights);
-  };
-
-  const actions = el("div", "editor-actions", modal);
-  const saveButton = el("button", "action-btn", actions);
-  saveButton.textContent = "Save";
-  const deleteButton = el("button", "action-btn", actions);
-  deleteButton.textContent = "Delete";
-  const status = el("span", "editor-status", actions);
-
-  const refreshEditorSelects = () => {
-    fillSelect(editSelect, [
-      { value: "", label: "— new profile —" },
-      ...loadCustomProfiles().map((p) => ({ value: p.name, label: p.name })),
-    ]);
-    fillSelect(baseSelect, profileEntries(null));
-    fillSelect(mixSelect, profileEntries("— none —"));
-  };
-  refreshEditorSelects();
-
-  saveButton.onclick = () => {
-    const name = nameInput.value.trim();
-    if (!name) {
-      status.textContent = "Enter an AI name";
-      return;
-    }
-    if (PRESETS.some((p) => p.name === name)) {
-      status.textContent = `"${name}" is a preset name`;
-      return;
-    }
-    saveCustomProfile({
-      name,
-      custom: true,
-      weights: Object.fromEntries(
-        WEIGHT_KEYS.map((key) => [key, Number(weightSliders[key].slider.value) / 100])
-      ) as unknown as AIProfile["weights"],
-    });
-    status.textContent = `Saved "${name}"`;
-    refreshEditorSelects();
-    editSelect.value = name;
-    onProfilesChanged();
-  };
-  deleteButton.onclick = () => {
-    const name = nameInput.value.trim();
-    if (!allProfiles().some((p) => p.custom && p.name === name)) {
-      status.textContent = "No custom profile with that name";
-      return;
-    }
-    deleteCustomProfile(name);
-    status.textContent = `Deleted "${name}"`;
-    refreshEditorSelects();
-    editSelect.value = "";
-    nameInput.value = "";
-    onProfilesChanged();
-  };
-}
-
 function showStartScreen(): void {
   root.innerHTML = "";
   const screen = el("div", "start-screen", root);
@@ -416,43 +253,23 @@ function showStartScreen(): void {
   const grid = el("div", "start-grid", panel);
   const deckOneSelect = makePicker("Your deck", deckNames, 0, grid);
   const deckTwoSelect = makePicker("Rival's deck", deckNames, 1, grid);
-  const profileOneSelect = makePicker("AI Red", [], 0, grid);
-  const profileTwoSelect = makePicker("Rival AI", [], 0, grid);
-  const profileOneWrap = profileOneSelect.parentElement as HTMLElement;
-  const profileTwoWrap = profileTwoSelect.parentElement as HTMLElement;
-
-  const refreshProfileSelects = () => {
-    fillSelect(profileOneSelect, profileEntries(null));
-    fillSelect(profileTwoSelect, profileEntries(null));
-  };
-  refreshProfileSelects();
 
   const applyMode = () => {
     const spectate = modeSelect.selectedIndex === 1;
     deckOneSelect.previousElementSibling!.textContent = spectate ? "AI Red's deck" : "Your deck";
     deckTwoSelect.previousElementSibling!.textContent = spectate ? "AI Blue's deck" : "Rival's deck";
-    profileTwoSelect.previousElementSibling!.textContent = spectate ? "AI Blue" : "Rival AI";
-    profileOneWrap.style.display = spectate ? "" : "none";
-    profileTwoWrap.style.gridColumn = spectate ? "" : "1 / -1";
   };
   modeSelect.onchange = applyMode;
   applyMode();
 
   const manageRow = el("div", "start-manage-row", panel);
-  const editorButton = el("button", "manage-profiles-btn", manageRow);
+  const editorButton = el("button", "menu-link-btn", manageRow);
   editorButton.textContent = "🛠 Deck Editor";
   editorButton.onclick = () => openDeckEditor(root, library, builtinDecks, showStartScreen);
-  const manageButton = el("button", "manage-profiles-btn", manageRow);
-  manageButton.textContent = "⚙ Manage AI profiles";
-  manageButton.onclick = () => openProfileEditor(refreshProfileSelects);
-
   const startButton = el("button", "action-btn start-btn", panel);
   startButton.textContent = "Start Battle";
   startButton.onclick = () =>
-    startGame(deckOneSelect.value, deckTwoSelect.value, modeSelect.selectedIndex === 1 ? "aivai" : "pvai", [
-      findProfile(profileOneSelect.value),
-      findProfile(profileTwoSelect.value),
-    ]);
+    startGame(deckOneSelect.value, deckTwoSelect.value, modeSelect.selectedIndex === 1 ? "aivai" : "pvai");
 
   const tourneyButton = el("button", "action-btn tourney-btn", panel);
   tourneyButton.textContent = "🏆 AI Tournament";
@@ -466,7 +283,7 @@ const tournamentCtx: TournamentCtx = {
     matchDone = onDone;
     tournamentLabel = label;
     pendingGameStats = [];
-    startGame(a.deck, b.deck, "aivai", [a.profile, b.profile], 6, [a.name, b.name]);
+    startGame(a.deck, b.deck, "aivai", 6, [a.name, b.name]);
   },
 };
 

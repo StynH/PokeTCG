@@ -1,4 +1,4 @@
-import { isEnergy, isTrainer } from "../../model/cards";
+import { isEnergy } from "../../model/cards";
 import type { CardFilter } from "../../model/effects";
 import type { ChoiceOption } from "../../core/choice";
 import type { EffectContext } from "../context";
@@ -35,8 +35,7 @@ function discardFromHandLoop(
   energyType?: import("../../model/energy").EnergyType
 ): void {
   if (count <= 0) return;
-  const player = ctx.players[ctx.controller];
-  const candidates = player.hand.filter(
+  const candidates = ctx.players[ctx.controller].hand.filter(
     (card) => !energyType || (isEnergy(card.def) && card.def.provides.includes(energyType))
   );
   if (candidates.length === 0) return;
@@ -46,7 +45,7 @@ function discardFromHandLoop(
     candidates.map((card) => ({
       label: card.def.name,
       informationKey: `discard-hand:${card.def.id}`,
-      aiScore: isEnergy(card.def) ? 5 : isTrainer(card.def) ? 2 : 0,
+      aiScore: -searchCardChoiceScore(ctx, card, ctx.controller),
       operation: ctx.command("cards.discardFromHand", { cardUid: card.uid, count, energyType }),
     }))
   );
@@ -58,7 +57,13 @@ defineEffect<{ op: "discardFromHand"; count: number; energyType?: import("../../
   canApply: (e, ctx) => ctx.players[ctx.controller].hand.filter(
     (card) => !e.energyType || (isEnergy(card.def) && card.def.provides.includes(e.energyType))
   ).length >= e.count,
-  aiValue: (e) => -e.count * 8,
+  aiValue: (e, ctx) => {
+    const costs = ctx.players[ctx.controller].hand
+      .filter((card) => !e.energyType || (isEnergy(card.def) && card.def.provides.includes(e.energyType)))
+      .map((card) => searchCardChoiceScore(ctx, card, ctx.controller))
+      .sort((a, b) => a - b);
+    return -costs.slice(0, e.count).reduce((total, cost) => total + cost, 0);
+  },
 });
 
 function discardOppHandLoop(ctx: EffectContext, count: number): void {
@@ -115,18 +120,33 @@ defineEffect<{
   aiValue: (_e, ctx) => (ctx.players[ctx.controller].hand.length <= 3 ? 55 : 30),
 });
 
-defineEffect<{ op: "heal"; amount: number; target: import("../../model/effects").EffectTarget }>({
+function healable(
+  pokemon: import("../../core/state").PokemonInPlay,
+  e: { restrictNames?: string[]; excludeEx?: boolean; clearConditions?: boolean }
+): boolean {
+  if (e.excludeEx && pokemon.def.isEx) return false;
+  if (e.restrictNames && !e.restrictNames.some((n) => pokemon.def.name.includes(n))) return false;
+  const hasCondition = pokemon.condition !== null || pokemon.poisonCounters > 0 || pokemon.burned;
+  return pokemon.damage > 0 || (!!e.clearConditions && hasCondition);
+}
+
+defineEffect<{ op: "heal"; amount: number; target: import("../../model/effects").EffectTarget; restrictNames?: string[]; excludeEx?: boolean; clearConditions?: boolean }>({
   op: "heal",
   run: (e, ctx) => {
     const source = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : ctx.players[ctx.controller].active;
     const healOne = (pokemon: import("../../core/state").PokemonInPlay) => {
-      pokemon.damage = Math.max(0, pokemon.damage - e.amount);
-      ctx.log(`${pokemon.def.name} healed ${e.amount}`, "heal", {
-        uid: pokemon.card.uid,
-        amount: e.amount,
-      });
+      if (pokemon.damage > 0) {
+        pokemon.damage = Math.max(0, pokemon.damage - e.amount);
+        ctx.log(`${pokemon.def.name} healed ${e.amount}`, "heal", { uid: pokemon.card.uid, amount: e.amount });
+      }
+      if (e.clearConditions) {
+        pokemon.condition = null;
+        pokemon.poisonCounters = 0;
+        pokemon.burned = false;
+        ctx.log(`${pokemon.def.name} has no more Special Conditions`, "status", { uid: pokemon.card.uid });
+      }
     };
-    let candidates = ctx.allInPlay(ctx.controller).filter(({ pokemon }) => pokemon.damage > 0);
+    let candidates = ctx.allInPlay(ctx.controller).filter(({ pokemon }) => healable(pokemon, e));
     if (e.target === "self") candidates = candidates.filter(({ pokemon }) => pokemon === source);
     else if (e.target === "anySelfChoiceExceptSelf")
       candidates = candidates.filter(({ pokemon }) => pokemon !== source);
@@ -139,12 +159,12 @@ defineEffect<{ op: "heal"; amount: number; target: import("../../model/effects")
         label: `${ctx.describeSlot(ref)} — ${pokemon.damage} damage`,
         informationKey: `heal:${pokemon.card.uid}`,
         aiScore: healingChoiceScore(ctx, pokemon, ctx.controller, e.amount, ref.slot === "active"),
-        operation: ctx.command("cards.heal", { pokemonUid: pokemon.card.uid, amount: e.amount }),
+        operation: ctx.command("cards.heal", { pokemonUid: pokemon.card.uid, amount: e.amount, clearConditions: !!e.clearConditions }),
       }))
     );
   },
-  canApply: (_e, ctx) =>
-    ctx.allInPlay(ctx.controller).some(({ pokemon }) => pokemon.damage > 0),
+  canApply: (e, ctx) =>
+    ctx.allInPlay(ctx.controller).some(({ pokemon }) => healable(pokemon, e)),
   aiValue: (_e, ctx) => {
     const worst = Math.max(
       0,
@@ -184,11 +204,27 @@ function searchDeckLoop(
   ctx.requestChoice(ctx.controller, "Search your deck for:", options);
 }
 
+function searchDeckAiValue(ctx: EffectContext, filter: CardFilter, count: number): number {
+  const seen = new Set<string>();
+  const scores: number[] = [];
+  for (const card of ctx.players[ctx.controller].deck) {
+    if (!ctx.matchesFilter(card.def, filter) || seen.has(card.def.id)) continue;
+    seen.add(card.def.id);
+    const score = searchCardChoiceScore(ctx, card, ctx.controller);
+    if (score > 0) scores.push(score);
+  }
+  scores.sort((a, b) => b - a);
+  return scores.slice(0, count).reduce(
+    (total, score, index) => total + score * (index === 0 ? 1 : 0.6),
+    0
+  );
+}
+
 defineEffect<{ op: "searchDeck"; filter: CardFilter; count: number }>({
   op: "searchDeck",
   run: (e, ctx) => searchDeckLoop(ctx, e.filter, e.count),
   canApply: (_e, ctx) => ctx.players[ctx.controller].deck.length > 0,
-  aiValue: () => 58,
+  aiValue: (e, ctx) => searchDeckAiValue(ctx, e.filter, e.count),
 });
 
 defineEffect<{ op: "drawToHandSize"; size: number }>({
@@ -294,14 +330,22 @@ defineEffectCommand<{ cardUid: number; count: number }>(
   }
 );
 
-defineEffectCommand<{ pokemonUid: number; amount: number }>("cards.heal", (payload, ctx) => {
+defineEffectCommand<{ pokemonUid: number; amount: number; clearConditions?: boolean }>("cards.heal", (payload, ctx) => {
   const entry = ctx.allInPlay(ctx.controller).find(({ pokemon }) => pokemon.card.uid === payload.pokemonUid);
   if (!entry) return;
-  entry.pokemon.damage = Math.max(0, entry.pokemon.damage - payload.amount);
-  ctx.log(`${entry.pokemon.def.name} healed ${payload.amount}`, "heal", {
-    uid: entry.pokemon.card.uid,
-    amount: payload.amount,
-  });
+  if (entry.pokemon.damage > 0) {
+    entry.pokemon.damage = Math.max(0, entry.pokemon.damage - payload.amount);
+    ctx.log(`${entry.pokemon.def.name} healed ${payload.amount}`, "heal", {
+      uid: entry.pokemon.card.uid,
+      amount: payload.amount,
+    });
+  }
+  if (payload.clearConditions) {
+    entry.pokemon.condition = null;
+    entry.pokemon.poisonCounters = 0;
+    entry.pokemon.burned = false;
+    ctx.log(`${entry.pokemon.def.name} has no more Special Conditions`, "status", { uid: entry.pokemon.card.uid });
+  }
 });
 
 defineEffectCommand<{ cardId: string; filter: CardFilter; count: number }>(

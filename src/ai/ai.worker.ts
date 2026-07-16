@@ -12,7 +12,7 @@ self.onmessage = (event: MessageEvent<SearchRequest>) => {
   const request = event.data;
   if (request.type !== "search") return;
   try {
-    const result = searchDecision(request.information, library, request.profile, {
+    const result = searchDecision(request.information, library, {
       seed: request.seed,
       deadlineMs: request.deadlineMs,
     });
@@ -27,4 +27,3 @@ self.onmessage = (event: MessageEvent<SearchRequest>) => {
     self.postMessage(response);
   }
 };
-

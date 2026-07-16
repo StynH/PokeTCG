@@ -29,14 +29,15 @@ export function validateDeck(deck: CardDef[]): DeckValidation {
   const problems: string[] = [];
   if (deck.length !== 60) problems.push(`Deck has ${deck.length} cards, needs exactly 60`);
   const nameCounts = new Map<string, number>();
+  let goldStarCount = 0;
   for (const def of deck) {
+    if (isPokemon(def) && def.isGoldStar) goldStarCount++;
     if (isEnergy(def) && def.isBasic) continue;
     nameCounts.set(def.name, (nameCounts.get(def.name) ?? 0) + 1);
   }
+  if (goldStarCount > 1) problems.push(`Deck has ${goldStarCount} Gold Star Pokémon, maximum is 1`);
   for (const [name, count] of nameCounts) {
     if (count > 4) problems.push(`More than 4 copies of ${name} (${count})`);
   }
-  const goldStars = deck.filter((def) => isPokemon(def) && def.isGoldStar).length;
-  if (goldStars > 1) problems.push(`More than 1 Pokémon ★ in deck (${goldStars})`);
   return { valid: problems.length === 0, problems };
 }

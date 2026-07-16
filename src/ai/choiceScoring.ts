@@ -118,16 +118,73 @@ export function energyAttachmentChoiceScore(
   isActive: boolean
 ): number {
   let best = -20;
+  let improvesAttack = false;
   for (const attack of pokemon.def.attacks) {
     const before = unmetEnergy(ctx, pokemon, owner, attack.cost);
     const after = unmetEnergy(ctx, pokemon, owner, attack.cost, card);
     if (after >= before) continue;
+    improvesAttack = true;
     const value = expectedAttackValue(attack);
     const completion = after === 0 ? 95 + value : 50 + value * 0.45;
     best = Math.max(best, completion);
   }
-  const existingInvestment = Math.min(24, pokemon.energy.length * 8);
-  return best + existingInvestment + (isActive ? 35 : 0) + attachedCardTacticalValue(card, pokemon);
+  const existingInvestment = Math.min(6, pokemon.energy.length * 2);
+  const activePriority = isActive && improvesAttack ? 35 : 0;
+  return best + existingInvestment + activePriority + attachedCardTacticalValue(card, pokemon);
+}
+
+function losesReadyAttack(
+  ctx: BattleScoringContext,
+  pokemon: PokemonInPlay,
+  owner: number,
+  card: CardInstance
+): boolean {
+  const withoutCard = {
+    ...pokemon,
+    energy: pokemon.energy.filter((energy) => energy.uid !== card.uid),
+  };
+  return pokemon.def.attacks.some((attack) =>
+    unmetEnergy(ctx, pokemon, owner, attack.cost) === 0 &&
+    unmetEnergy(ctx, withoutCard, owner, attack.cost) > 0
+  );
+}
+
+export function energyTransferChoiceScore(
+  ctx: BattleScoringContext,
+  source: PokemonInPlay,
+  target: PokemonInPlay,
+  owner: number,
+  card: CardInstance
+): number {
+  if (losesReadyAttack(ctx, source, owner, card)) return -1000;
+  const sourceIsActive = ctx.players[owner].active === source;
+  const targetIsActive = ctx.players[owner].active === target;
+  const sourceAfter = {
+    ...source,
+    energy: source.energy.filter((energy) => energy.uid !== card.uid),
+  };
+  const targetAfter = { ...target, energy: [...target.energy, card] };
+  const before =
+    pokemonBattleScore(ctx, source, owner, sourceIsActive) +
+    pokemonBattleScore(ctx, target, owner, targetIsActive);
+  const after =
+    pokemonBattleScore(ctx, sourceAfter, owner, sourceIsActive) +
+    pokemonBattleScore(ctx, targetAfter, owner, targetIsActive);
+  const attachmentGain = energyAttachmentChoiceScore(ctx, card, target, owner, targetIsActive);
+  return after - before + attachmentGain * 0.35;
+}
+
+export function energyMoveSourceChoiceScore(
+  ctx: BattleScoringContext,
+  source: PokemonInPlay,
+  owner: number,
+  card: CardInstance
+): number {
+  const targets = ctx.allInPlay(owner).filter(({ pokemon }) => pokemon !== source);
+  return Math.max(
+    -1000,
+    ...targets.map(({ pokemon }) => energyTransferChoiceScore(ctx, source, pokemon, owner, card))
+  );
 }
 
 export function energyRemovalChoiceScore(
@@ -172,18 +229,10 @@ export function energyMoveValue(
     if (!card) continue;
     for (const target of entries) {
       if (target.pokemon === source.pokemon) continue;
-      const before =
-        pokemonBattleScore(ctx, source.pokemon, owner, source.ref.slot === "active") +
-        pokemonBattleScore(ctx, target.pokemon, owner, target.ref.slot === "active");
-      const sourceAfter = {
-        ...source.pokemon,
-        energy: source.pokemon.energy.filter((energy) => energy.uid !== card.uid),
-      };
-      const targetAfter = { ...target.pokemon, energy: [...target.pokemon.energy, card] };
-      const after =
-        pokemonBattleScore(ctx, sourceAfter, owner, source.ref.slot === "active") +
-        pokemonBattleScore(ctx, targetAfter, owner, target.ref.slot === "active");
-      bestGain = Math.max(bestGain, after - before);
+      bestGain = Math.max(
+        bestGain,
+        energyTransferChoiceScore(ctx, source.pokemon, target.pokemon, owner, card)
+      );
     }
   }
   if (!Number.isFinite(bestGain)) return -40;
@@ -206,16 +255,23 @@ export function searchCardChoiceScore(
     );
   }
   if (isPokemon(def)) {
+    const copiesInHand = player.hand.filter((held) => held.def.id === def.id).length;
+    const duplicatePenalty = copiesInHand * 28;
     const evolvesNow = ctx.allInPlay(owner).some(({ pokemon }) => def.evolvesFrom === pokemon.def.name);
-    if (evolvesNow) return 105 + def.hp * 0.1;
+    if (evolvesNow) return 105 + def.hp * 0.1 - duplicatePenalty;
     if (def.stage === "Basic") {
       const alreadyInPlay = ctx.allInPlay(owner).some(({ pokemon }) => pokemon.def.name === def.name);
-      return player.bench.length < 5 ? (alreadyInPlay ? 42 : 68) + def.hp * 0.08 : 8;
+      if (player.bench.length >= 5) return 0;
+      return (alreadyInPlay ? 42 : 68) + def.hp * 0.08 - duplicatePenalty;
     }
     const hasPreviousStage = player.hand.some(
       (held) => isPokemon(held.def) && def.evolvesFrom === held.def.name
     );
-    return hasPreviousStage ? 55 : 12;
+    if (hasPreviousStage) return 55 - duplicatePenalty;
+    const previousStageInDeck = player.deck.some(
+      (candidate) => isPokemon(candidate.def) && def.evolvesFrom === candidate.def.name
+    );
+    return previousStageInDeck ? Math.max(0, 32 - duplicatePenalty) : 0;
   }
   if (isTrainer(def)) return def.kind === "Supporter" ? 52 : 34;
   return 0;

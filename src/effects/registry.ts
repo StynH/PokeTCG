@@ -47,6 +47,10 @@ export function effectAiValue(effect: Effect, ctx: EffectContext): number {
   return handler.aiValue(effect, ctx);
 }
 
+export function effectsAiValue(effects: Effect[], ctx: EffectContext): number {
+  return effects.reduce((total, effect) => total + effectAiValue(effect, ctx), 0);
+}
+
 export function effectRegistryCoverage(): Array<{ op: string; hasAiValue: boolean }> {
   return [...registry.values()].map((handler) => ({
     op: handler.op,

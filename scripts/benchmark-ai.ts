@@ -1,6 +1,5 @@
 import cardsJson from "../src/data/cards.json";
 import decksJson from "../src/data/decks.json";
-import { BALANCED } from "../src/ai/profiles";
 import { chooseActionSeeded, chooseOptionSeeded } from "../src/ai/simpleAI";
 import { SeededRng } from "../src/core/rng";
 import { HeadlessSearchAgent } from "../src/ai/headlessAgent";
@@ -14,8 +13,10 @@ const library = buildLibrary(cardsJson as CardDef[]);
 const decks = decksJson as Record<string, Record<string, number>>;
 const seedPairs = Number(process.argv[2] ?? 5);
 const iterations = Number(process.argv[3] ?? 128);
-const deckLimit = Number(process.argv[4] ?? Object.keys(decks).length);
-const names = Object.keys(decks).slice(0, deckLimit);
+const deckSelection = process.argv[4] ?? "all";
+const names = deckSelection === "all"
+  ? Object.keys(decks)
+  : Object.keys(decks).slice(0, Number(deckSelection));
 const mirrorOnly = process.argv[5] === "mirror";
 const outputArg = process.argv.find((argument) => argument.startsWith("--output="));
 
@@ -64,7 +65,7 @@ for (let expertDeck = 0; expertDeck < names.length; expertDeck++) {
         const legacyRng = new SeededRng(
           0x51a7 + expertDeck * 1000 + legacyDeck * 100 + pair * 2 + expertSeat
         );
-        const expert = new HeadlessSearchAgent(library, BALANCED, iterations);
+        const expert = new HeadlessSearchAgent(library, iterations);
         let steps = 0;
         while (game.phase === "playing" && steps++ < 4000) {
           const actor = game.pending?.player ?? game.current;
@@ -80,9 +81,9 @@ for (let expertDeck = 0; expertDeck < names.length; expertDeck++) {
             if (result.reusedPlan) reusedPlans++;
             if (result.forced) forcedDecisions++;
           } else if (game.pending) {
-            game.resolvePending(chooseOptionSeeded(game.pending, BALANCED, legacyRng));
+            game.resolvePending(chooseOptionSeeded(game.pending, legacyRng));
           } else {
-            const action = chooseActionSeeded(game, BALANCED, legacyRng);
+            const action = chooseActionSeeded(game, legacyRng);
             countAction(legacyActions, action.type);
             game.perform(action);
           }
@@ -107,7 +108,8 @@ for (let expertDeck = 0; expertDeck < names.length; expertDeck++) {
 
 const games = wins + losses;
 const pointWinRate = games ? wins / games : 0;
-const releaseMode = seedPairs >= 20 && iterations >= 512 && names.length === 7 && mirrorOnly;
+const releaseMode =
+  seedPairs >= 20 && iterations >= 512 && names.length === Object.keys(decks).length && mirrorOnly;
 const weakDecks = [...perDeck]
   .filter(([, result]) => result.games > 0 && result.wins / result.games < 0.4)
   .map(([name]) => name);

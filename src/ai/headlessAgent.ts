@@ -1,7 +1,7 @@
 import type { Decision, Game } from "../engine/game";
 import type { CardLibrary } from "../model/cards";
-import type { AIProfile } from "./profiles";
 import { searchDecision } from "./ismcts";
+import { isPlannedDecisionReusable } from "./simpleAI";
 import {
   matchPlannedDecision,
   parsePrincipalVariation,
@@ -21,7 +21,6 @@ export class HeadlessSearchAgent {
 
   constructor(
     private readonly library: CardLibrary,
-    private readonly profile: AIProfile,
     private readonly maxIterations: number
   ) {}
 
@@ -29,7 +28,7 @@ export class HeadlessSearchAgent {
     const point = game.getDecisionPoint();
     if (!point || point.options.length === 0) throw new Error("AI has no legal decision");
     const planned = matchPlannedDecision(point, this.plannedDecisions[0]);
-    if (planned) {
+    if (planned && isPlannedDecisionReusable(game, planned)) {
       this.plannedDecisions.shift();
       return { decision: planned, iterations: 0, elapsedMs: 0, reusedPlan: true, forced: false };
     }
@@ -45,7 +44,6 @@ export class HeadlessSearchAgent {
     const result = searchDecision(
       game.getInformationState(point.actor),
       this.library,
-      this.profile,
       { seed, maxIterations: this.maxIterations }
     );
     this.plannedDecisions = parsePrincipalVariation(result.principalVariation.slice(1));

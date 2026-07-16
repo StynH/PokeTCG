@@ -199,6 +199,7 @@ export function cardFace(def: CardDef, size: "xl" | "lg" | "md" | "hand"): HTMLE
     card.title = def.name;
     if (isPokemon(def) && def.isEx) card.classList.add("tile-ex");
     if (isPokemon(def) && def.isGoldStar) card.classList.add("tile-star");
+    if (isPokemon(def) && def.isCrystal) card.classList.add("tile-crystal");
     return card;
   }
 
@@ -209,6 +210,7 @@ export function cardFace(def: CardDef, size: "xl" | "lg" | "md" | "hand"): HTMLE
     emblem = TYPE_EMBLEMS[def.types[0] ?? "Colorless"];
     if (def.isEx) card.classList.add("tile-ex");
     if (def.isGoldStar) card.classList.add("tile-star");
+    if (def.isCrystal) card.classList.add("tile-crystal");
   } else if (isEnergy(def)) {
     color = TYPE_COLORS[def.provides.length === 1 ? def.provides[0] : "Colorless"];
     emblem = def.provides.length === 1 ? TYPE_EMBLEMS[def.provides[0]] : "🌈";
@@ -246,6 +248,7 @@ export function cardFace(def: CardDef, size: "xl" | "lg" | "md" | "hand"): HTMLE
     if (def.isDelta) art.appendChild(el("span", "delta-chip", "δ"));
     if (def.isEx) art.appendChild(symbolChip("ex-chip", "/symbols/ex.png", "ex"));
     if (def.isGoldStar) art.appendChild(symbolChip("star-chip", "/symbols/shiny.png", "Gold Star"));
+    if (def.isCrystal) art.appendChild(symbolChip("crystal-chip", "/symbols/crystal.png", "Crystal"));
   }
   card.appendChild(art);
 
@@ -434,6 +437,12 @@ export function buildCardDetail(def: CardDef, uid: number | null = null): HTMLEl
       const tag = el("span", "detail-tag detail-tag-star");
       tag.appendChild(symbolChip("detail-tag-icon", "/symbols/shiny.png", "Gold Star"));
       tag.appendChild(document.createTextNode("Pokémon ★"));
+      meta.appendChild(tag);
+    }
+    if (def.isCrystal) {
+      const tag = el("span", "detail-tag detail-tag-crystal");
+      tag.appendChild(symbolChip("detail-tag-icon", "/symbols/crystal.png", "Crystal"));
+      tag.appendChild(document.createTextNode("Crystal Type"));
       meta.appendChild(tag);
     }
     if (def.playableAsEnergy) meta.appendChild(el("span", "detail-tag detail-tag-delta", "Plays as Energy"));

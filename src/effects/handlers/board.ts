@@ -2,7 +2,7 @@ import { isEnergy } from "../../model/cards";
 import type { EnergyCardDef, PokemonCardDef } from "../../model/cards";
 import type { Effect } from "../../model/effects";
 import type { ChoiceOption, EffectContext } from "../context";
-import { defineEffect, defineEffectCommand } from "../registry";
+import { defineEffect, defineEffectCommand, effectsAiValue } from "../registry";
 import { gustChoiceScore, pokemonBattleScore, scoopUpChoiceScore } from "../../ai/choiceScoring";
 
 defineEffect<{ op: "switchSelf"; optional?: boolean }>({
@@ -38,6 +38,45 @@ defineEffect<{ op: "switchSelf"; optional?: boolean }>({
     const improvement = bestBench - current;
     return improvement > 10 ? 24 + improvement * 0.35 : -18;
   },
+});
+
+defineEffect<{ op: "promoteSelfToActive"; moveDamageCounters?: number }>({
+  op: "promoteSelfToActive",
+  run: (e, ctx) => {
+    const me = ctx.players[ctx.controller];
+    const self = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : null;
+    const displaced = me.active;
+    if (!self || !displaced || self === displaced) return;
+    const index = me.bench.indexOf(self);
+    if (index < 0) return;
+    ctx.swapActive(ctx.controller, index);
+    ctx.log(`${self.def.name} switches into the Active spot`, "switch", {
+      player: ctx.controller,
+      uid: self.card.uid,
+    });
+    const move = Math.min(displaced.damage, (e.moveDamageCounters ?? 0) * 10);
+    if (move > 0) {
+      displaced.damage -= move;
+      self.damage += move;
+      ctx.log(`${move / 10} damage counter(s) move from ${displaced.def.name} to ${self.def.name}`);
+    }
+  },
+  canApply: (_e, ctx) => {
+    const me = ctx.players[ctx.controller];
+    const self = ctx.sourceRef ? ctx.getPokemon(ctx.sourceRef) : null;
+    return !!self && !!me.active && me.active !== self && me.bench.includes(self);
+  },
+  aiValue: () => 22,
+});
+
+defineEffect<{ op: "switchOpponent" }>({
+  op: "switchOpponent",
+  run: (_e, ctx) => ctx.queueSwitchChoice(ctx.opponent),
+  canApply: (_e, ctx) => {
+    const opponent = ctx.players[ctx.opponent];
+    return opponent.active !== null && opponent.bench.length > 0;
+  },
+  aiValue: () => 10,
 });
 
 defineEffect<{ op: "gustOpponent"; optional?: boolean; thenIfSwitched?: Effect[] }>({
@@ -100,12 +139,12 @@ defineEffect<{ op: "scoopUp" }>({
   aiValue: () => 20,
 });
 
-function moveDamageLoop(ctx: EffectContext, count: number): void {
+function moveDamageLoop(ctx: EffectContext, count: number, ownOnly?: boolean): void {
   if (count <= 0) return;
-  const sources = [...ctx.allInPlay(0), ...ctx.allInPlay(1)].filter(
-    ({ pokemon }) => pokemon.damage > 0
-  );
+  const pool = ownOnly ? ctx.allInPlay(ctx.controller) : [...ctx.allInPlay(0), ...ctx.allInPlay(1)];
+  const sources = pool.filter(({ pokemon }) => pokemon.damage > 0);
   if (sources.length === 0) return;
+  if (ownOnly && ctx.allInPlay(ctx.controller).length < 2) return;
   ctx.requestChoice(
     ctx.controller,
     "Move a damage counter from which Pokemon?",
@@ -113,14 +152,19 @@ function moveDamageLoop(ctx: EffectContext, count: number): void {
       label: `${ctx.players[ref.p].name}'s ${ctx.describeSlot(ref)} — ${pokemon.damage} damage`,
       aiScore: ref.p === ctx.controller ? pokemon.damage : 0,
       informationKey: `damage-source:${pokemon.card.uid}`,
-      operation: ctx.command("board.chooseDamageTarget", { sourceUid: pokemon.card.uid, count }),
+      operation: ctx.command("board.chooseDamageTarget", { sourceUid: pokemon.card.uid, count, ownOnly: !!ownOnly }),
     }))
   );
 }
 
-defineEffect<{ op: "moveDamageCounters"; count: number }>({
+defineEffect<{ op: "moveDamageCounters"; count: number; ownOnly?: boolean }>({
   op: "moveDamageCounters",
-  run: (e, ctx) => moveDamageLoop(ctx, e.count),
+  run: (e, ctx) => moveDamageLoop(ctx, e.count, e.ownOnly),
+  canApply: (e, ctx) => {
+    if (!e.ownOnly) return true;
+    const mine = ctx.allInPlay(ctx.controller);
+    return mine.length >= 2 && mine.some(({ pokemon }) => pokemon.damage > 0);
+  },
   aiValue: () => 20,
 });
 
@@ -185,6 +229,7 @@ defineEffect<{ op: "healAllYours"; amount: number }>({
       }
     }
   },
+  canApply: (_e, ctx) => ctx.allInPlay(ctx.controller).some(({ pokemon }) => pokemon.damage > 0),
   aiValue: (e, ctx) => {
     const count = ctx.allInPlay(ctx.controller).filter(({ pokemon }) => pokemon.damage >= e.amount).length;
     return count * e.amount * 0.25;
@@ -197,15 +242,8 @@ defineEffect<{ op: "flip"; heads: Effect[]; tails: Effect[] }>({
     const heads = ctx.flip("Coin flip");
     ctx.queueEffects(heads ? e.heads : e.tails);
   },
-  aiValue: (e) => {
-    let val = 0;
-    for (const sub of e.heads) {
-      if (sub.op === "applyCondition" || sub.op === "applyPoison" || sub.op === "applyBurn")
-        val += 12;
-      if (sub.op === "damage") val += (sub as { op: "damage"; amount: number }).amount / 2;
-    }
-    return val;
-  },
+  aiValue: (e, ctx) =>
+    (effectsAiValue(e.heads, ctx) + effectsAiValue(e.tails, ctx)) / 2,
 });
 
 defineEffectCommand("board.noop", () => {});
@@ -246,14 +284,13 @@ defineEffectCommand<{ pokemonUid: number }>("board.scoop", (payload, ctx) => {
   ctx.log(`${pokemon.def.name} returns to ${player.name}'s hand`);
 });
 
-defineEffectCommand<{ sourceUid: number; count: number }>(
+defineEffectCommand<{ sourceUid: number; count: number; ownOnly?: boolean }>(
   "board.chooseDamageTarget",
   (payload, ctx) => {
-    const source = [...ctx.allInPlay(0), ...ctx.allInPlay(1)]
-      .find(({ pokemon }) => pokemon.card.uid === payload.sourceUid);
+    const pool = payload.ownOnly ? ctx.allInPlay(ctx.controller) : [...ctx.allInPlay(0), ...ctx.allInPlay(1)];
+    const source = pool.find(({ pokemon }) => pokemon.card.uid === payload.sourceUid);
     if (!source || source.pokemon.damage <= 0) return;
-    const targets = [...ctx.allInPlay(0), ...ctx.allInPlay(1)]
-      .filter(({ pokemon }) => pokemon.card.uid !== payload.sourceUid);
+    const targets = pool.filter(({ pokemon }) => pokemon.card.uid !== payload.sourceUid);
     if (targets.length === 0) return;
     ctx.requestChoice(
       ctx.controller,
@@ -266,13 +303,14 @@ defineEffectCommand<{ sourceUid: number; count: number }>(
           sourceUid: payload.sourceUid,
           targetUid: entry.pokemon.card.uid,
           count: payload.count,
+          ownOnly: !!payload.ownOnly,
         }),
       }))
     );
   }
 );
 
-defineEffectCommand<{ sourceUid: number; targetUid: number; count: number }>(
+defineEffectCommand<{ sourceUid: number; targetUid: number; count: number; ownOnly?: boolean }>(
   "board.moveDamage",
   (payload, ctx) => {
     const entries = [...ctx.allInPlay(0), ...ctx.allInPlay(1)];
@@ -282,7 +320,7 @@ defineEffectCommand<{ sourceUid: number; targetUid: number; count: number }>(
     source.damage -= 10;
     target.damage += 10;
     ctx.log(`A damage counter moves from ${source.def.name} to ${target.def.name}`);
-    moveDamageLoop(ctx, payload.count - 1);
+    moveDamageLoop(ctx, payload.count - 1, payload.ownOnly);
   }
 );
 

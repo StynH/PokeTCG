@@ -87,6 +87,16 @@ export function forceCoins(game: Game, heads: boolean): void {
   (game as unknown as { rng: { next: () => number } }).rng = { next: () => (heads ? 0.1 : 0.9) };
 }
 
+export function forceCoinSequence(game: Game, outcomes: boolean[]): void {
+  let index = 0;
+  (game as unknown as { rng: { next: () => number } }).rng = {
+    next: () => {
+      if (index >= outcomes.length) throw new Error("Forced coin sequence exhausted");
+      return outcomes[index++] ? 0.1 : 0.9;
+    },
+  };
+}
+
 export function resolveChoice(game: Game, labelIncludes: string): void {
   if (!game.pending) throw new Error("No pending choice to resolve");
   const index = game.pending.options.findIndex((o) => o.label.includes(labelIncludes));
